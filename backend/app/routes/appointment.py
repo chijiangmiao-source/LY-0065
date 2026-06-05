@@ -3,6 +3,9 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Depends, Query
 
 from app.models.appointment import Appointment, AppointmentCreate, AppointmentUpdate, AppointmentResponse
+from app.models.service_consumable_template import ServiceConsumableTemplate
+from app.models.consumable import Consumable
+from app.models.usage import Usage
 from app.models.user import User
 from app.utils.auth import get_current_user
 
@@ -153,6 +156,75 @@ async def delete_appointment(appointment_no: str, current_user: User = Depends(g
     return {"message": "删除成功"}
 
 
+async def generate_usage_no() -> str:
+    today = datetime.now().strftime("%Y%m%d")
+    prefix = f"LY{today}"
+    last_usage = await Usage.find(Usage.usage_no.startswith(prefix)).sort("-usage_no").first_or_none()
+    if last_usage:
+        seq = int(last_usage.usage_no[-4:]) + 1
+    else:
+        seq = 1
+    return f"{prefix}{seq:04d}"
+
+
+@router.get("/{appointment_no}/stock-check")
+async def check_appointment_stock(appointment_no: str, current_user: User = Depends(get_current_user)):
+    appointment = await Appointment.find_one(Appointment.appointment_no == appointment_no)
+    if not appointment:
+        raise HTTPException(status_code=404, detail="预约不存在")
+
+    template = await ServiceConsumableTemplate.find_one(
+        ServiceConsumableTemplate.service_id == appointment.service_id,
+        ServiceConsumableTemplate.status == "启用"
+    )
+    if not template or not template.items:
+        return {
+            "has_template": False,
+            "items": [],
+            "sufficient": True,
+            "insufficient_items": []
+        }
+
+    items_detail = []
+    insufficient_items = []
+    for item in template.items:
+        consumable = await Consumable.find_one(Consumable.consumable_no == item["consumable_no"])
+        if not consumable:
+            insufficient_items.append({
+                "consumable_no": item["consumable_no"],
+                "consumable_name": item["consumable_name"],
+                "required": item["quantity"],
+                "stock": 0,
+                "unit": item.get("unit", "个"),
+                "reason": "耗材不存在"
+            })
+            continue
+        items_detail.append({
+            "consumable_no": item["consumable_no"],
+            "consumable_name": item["consumable_name"],
+            "required": item["quantity"],
+            "stock": consumable.stock_quantity,
+            "unit": item.get("unit", "个"),
+            "sufficient": consumable.stock_quantity >= item["quantity"]
+        })
+        if consumable.stock_quantity < item["quantity"]:
+            insufficient_items.append({
+                "consumable_no": item["consumable_no"],
+                "consumable_name": item["consumable_name"],
+                "required": item["quantity"],
+                "stock": consumable.stock_quantity,
+                "unit": item.get("unit", "个"),
+                "reason": f"库存不足，需要 {item['quantity']} {item.get('unit', '个')}，当前仅有 {consumable.stock_quantity} {item.get('unit', '个')}"
+            })
+
+    return {
+        "has_template": True,
+        "items": items_detail,
+        "sufficient": len(insufficient_items) == 0,
+        "insufficient_items": insufficient_items
+    }
+
+
 @router.post("/{appointment_no}/complete")
 async def complete_appointment(appointment_no: str, current_user: User = Depends(get_current_user)):
     appointment = await Appointment.find_one(Appointment.appointment_no == appointment_no)
@@ -160,9 +232,61 @@ async def complete_appointment(appointment_no: str, current_user: User = Depends
         raise HTTPException(status_code=404, detail="预约不存在")
     if appointment.status == "已取消":
         raise HTTPException(status_code=400, detail="已取消的预约不能办理服务")
+    if appointment.status == "已完成":
+        raise HTTPException(status_code=400, detail="该预约已完成")
+
+    template = await ServiceConsumableTemplate.find_one(
+        ServiceConsumableTemplate.service_id == appointment.service_id,
+        ServiceConsumableTemplate.status == "启用"
+    )
+
+    if template and template.items:
+        insufficient_items = []
+        consumables_to_update = []
+        for item in template.items:
+            consumable = await Consumable.find_one(Consumable.consumable_no == item["consumable_no"])
+            if not consumable:
+                insufficient_items.append(f"{item['consumable_name']}: 耗材不存在")
+                continue
+            if consumable.stock_quantity < item["quantity"]:
+                insufficient_items.append(
+                    f"{item['consumable_name']}: 需要 {item['quantity']} {item.get('unit', '个')}，"
+                    f"当前库存仅有 {consumable.stock_quantity} {item.get('unit', '个')}"
+                )
+                continue
+            consumables_to_update.append((consumable, item))
+
+        if insufficient_items:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": "库存不足，无法完成服务，请先补充耗材库存",
+                    "insufficient_items": insufficient_items
+                }
+            )
+
+        for consumable, item in consumables_to_update:
+            consumable.stock_quantity -= item["quantity"]
+            await consumable.save()
+
+            usage_no = await generate_usage_no()
+            db_usage = Usage(
+                usage_no=usage_no,
+                consumable_no=item["consumable_no"],
+                consumable_name=item["consumable_name"],
+                quantity=item["quantity"],
+                employee_id=appointment.employee_id or current_user.username,
+                employee_name=appointment.employee_name or current_user.username,
+                usage_date=datetime.now().strftime("%Y-%m-%d"),
+                source_type="自动扣减",
+                appointment_no=appointment.appointment_no,
+                remark=f"服务完成自动扣减: {appointment.service_name}"
+            )
+            await db_usage.insert()
+
     appointment.status = "已完成"
     await appointment.save()
-    return {"message": "服务已完成"}
+    return {"message": "服务已完成，耗材已自动扣减"}
 
 
 @router.post("/{appointment_no}/cancel")
@@ -170,6 +294,21 @@ async def cancel_appointment(appointment_no: str, current_user: User = Depends(g
     appointment = await Appointment.find_one(Appointment.appointment_no == appointment_no)
     if not appointment:
         raise HTTPException(status_code=404, detail="预约不存在")
+    if appointment.status == "已取消":
+        raise HTTPException(status_code=400, detail="预约已取消")
+
+    if appointment.status == "已完成":
+        auto_usages = await Usage.find(
+            Usage.appointment_no == appointment_no,
+            Usage.source_type == "自动扣减"
+        ).to_list()
+        for usage in auto_usages:
+            consumable = await Consumable.find_one(Consumable.consumable_no == usage.consumable_no)
+            if consumable:
+                consumable.stock_quantity += usage.quantity
+                await consumable.save()
+            await usage.delete()
+
     appointment.status = "已取消"
     await appointment.save()
-    return {"message": "预约已取消"}
+    return {"message": "预约已取消，库存已退还"}

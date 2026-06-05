@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Table, Button, Modal, Form, Input, Select, message, Space, Card, InputNumber, DatePicker, Row, Col } from 'antd'
+import { Table, Button, Modal, Form, Input, Select, message, Space, Card, InputNumber, DatePicker, Row, Col, Tag } from 'antd'
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import request from '../utils/request'
@@ -13,6 +13,8 @@ interface Usage {
   employee_id: string
   employee_name: string
   usage_date: string
+  source_type: string
+  appointment_no?: string
   remark?: string
   created_at: string
 }
@@ -21,11 +23,13 @@ interface ConsumableOption {
   consumable_no: string
   name: string
   stock_quantity: number
+  status: string
 }
 
 interface EmployeeOption {
   employee_id: string
   name: string
+  status: string
 }
 
 const Usage = () => {
@@ -39,6 +43,7 @@ const Usage = () => {
     consumable_name: '',
     employee_id: '',
     usage_date: '',
+    source_type: '',
   })
 
   const fetchData = async () => {
@@ -48,6 +53,7 @@ const Usage = () => {
       if (filters.consumable_name) params.append('consumable_name', filters.consumable_name)
       if (filters.employee_id) params.append('employee_id', filters.employee_id)
       if (filters.usage_date) params.append('usage_date', filters.usage_date)
+      if (filters.source_type) params.append('source_type', filters.source_type)
       const res = await request.get(`/usages?${params.toString()}`) as Usage[]
       setData(res)
     } finally {
@@ -115,6 +121,11 @@ const Usage = () => {
     }
   }
 
+  const sourceTypeColors: Record<string, string> = {
+    '手工': 'green',
+    '自动扣减': 'blue',
+  }
+
   const columns = [
     { title: '领用编号', dataIndex: 'usage_no', key: 'usage_no' },
     { title: '耗材名称', dataIndex: 'consumable_name', key: 'consumable_name' },
@@ -122,20 +133,30 @@ const Usage = () => {
     { title: '领用数量', dataIndex: 'quantity', key: 'quantity' },
     { title: '领用人', dataIndex: 'employee_name', key: 'employee_name' },
     { title: '领用日期', dataIndex: 'usage_date', key: 'usage_date' },
+    {
+      title: '来源类型',
+      dataIndex: 'source_type',
+      key: 'source_type',
+      render: (type: string) => <Tag color={sourceTypeColors[type] || 'default'}>{type}</Tag>,
+    },
+    { title: '关联预约', dataIndex: 'appointment_no', key: 'appointment_no', render: (v: string) => v || '-' },
     { title: '备注', dataIndex: 'remark', key: 'remark' },
     {
       title: '操作',
       key: 'action',
       render: (_: any, record: Usage) => (
         <Space>
-          <Button
-            icon={<DeleteOutlined />}
-            size="small"
-            danger
-            onClick={() => handleDelete(record.usage_no)}
-          >
-            删除
-          </Button>
+          {record.source_type !== '自动扣减' && (
+            <Button
+              icon={<DeleteOutlined />}
+              size="small"
+              danger
+              onClick={() => handleDelete(record.usage_no)}
+            >
+              删除
+            </Button>
+          )}
+          {record.source_type === '自动扣减' && <span style={{ color: '#999' }}>系统自动</span>}
         </Space>
       ),
     },
@@ -152,7 +173,7 @@ const Usage = () => {
     >
       <Card size="small" style={{ marginBottom: 16 }}>
         <Row gutter={16}>
-          <Col span={8}>
+          <Col span={6}>
             <Input
               placeholder="搜索耗材名称"
               allowClear
@@ -160,7 +181,7 @@ const Usage = () => {
               onChange={(e) => setFilters({ ...filters, consumable_name: e.target.value })}
             />
           </Col>
-          <Col span={8}>
+          <Col span={6}>
             <Select
               placeholder="选择员工"
               allowClear
@@ -173,7 +194,20 @@ const Usage = () => {
               }))}
             />
           </Col>
-          <Col span={8}>
+          <Col span={6}>
+            <Select
+              placeholder="来源类型"
+              allowClear
+              style={{ width: '100%' }}
+              value={filters.source_type || undefined}
+              onChange={(value) => setFilters({ ...filters, source_type: value || '' })}
+              options={[
+                { value: '手工', label: '手工' },
+                { value: '自动扣减', label: '自动扣减' },
+              ]}
+            />
+          </Col>
+          <Col span={6}>
             <DatePicker
               placeholder="选择日期"
               style={{ width: '100%' }}

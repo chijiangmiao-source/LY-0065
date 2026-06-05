@@ -5,6 +5,7 @@ from app.models.appointment import Appointment
 from app.models.schedule import Schedule
 from app.models.consumable import Consumable
 from app.models.usage import Usage
+from app.models.service_consumable_template import ServiceConsumableTemplate
 
 __all__ = [
     "User",
@@ -14,4 +15,5 @@ __all__ = [
     "Schedule",
     "Consumable",
     "Usage",
+    "ServiceConsumableTemplate",
 ]

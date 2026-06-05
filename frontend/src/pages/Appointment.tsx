@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Table, Button, Modal, Form, Input, Select, message, Space, Card, DatePicker, Tag, Row, Col } from 'antd'
-import { PlusOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined } from '@ant-design/icons'
+import { Table, Button, Modal, Form, Input, Select, message, Space, Card, DatePicker, Tag, Row, Col, List, Alert } from 'antd'
+import { PlusOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, ExclamationCircleOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import request from '../utils/request'
 
@@ -22,11 +22,13 @@ interface Appointment {
 interface ServiceOption {
   service_id: string
   name: string
+  status: string
 }
 
 interface EmployeeOption {
   employee_id: string
   name: string
+  status: string
 }
 
 const timeSlots = [
@@ -48,6 +50,22 @@ const statusColors: Record<string, string> = {
   '已取消': 'red',
 }
 
+interface StockCheckItem {
+  consumable_no: string
+  consumable_name: string
+  required: number
+  stock: number
+  unit: string
+  sufficient: boolean
+}
+
+interface StockCheckResult {
+  has_template: boolean
+  items: StockCheckItem[]
+  sufficient: boolean
+  insufficient_items: Array<{ consumable_no: string; consumable_name: string; required: number; stock: number; unit: string; reason: string }>
+}
+
 const Appointment = () => {
   const [data, setData] = useState<Appointment[]>([])
   const [services, setServices] = useState<ServiceOption[]>([])
@@ -60,6 +78,9 @@ const Appointment = () => {
     customer_name: '',
     status: '',
   })
+  const [stockCheckVisible, setStockCheckVisible] = useState(false)
+  const [stockCheckResult, setStockCheckResult] = useState<StockCheckResult | null>(null)
+  const [pendingCompleteNo, setPendingCompleteNo] = useState<string>('')
 
   const fetchData = async () => {
     setLoading(true)
@@ -123,10 +144,24 @@ const Appointment = () => {
     }
   }
 
-  const handleComplete = async (id: string) => {
+  const handleComplete = async (appointment_no: string) => {
     try {
-      await request.post(`/appointments/${id}/complete`)
-      message.success('服务已完成')
+      const res = await request.get(`/appointments/${appointment_no}/stock-check`) as StockCheckResult
+      setStockCheckResult(res)
+      setPendingCompleteNo(appointment_no)
+      setStockCheckVisible(true)
+    } catch (error) {
+      console.error('Stock check error:', error)
+    }
+  }
+
+  const confirmComplete = async () => {
+    if (!pendingCompleteNo) return
+    try {
+      await request.post(`/appointments/${pendingCompleteNo}/complete`)
+      message.success('服务已完成，耗材已自动扣减')
+      setStockCheckVisible(false)
+      setPendingCompleteNo('')
       fetchData()
     } catch (error) {
       console.error('Complete error:', error)
@@ -302,8 +337,9 @@ const Appointment = () => {
                 rules={[{ required: true, message: '请选择服务项目' }]}
               >
                 <Select
-                  onChange={(value, option) => {
-                    form.setFieldsValue({ service_name: option.label })
+                  onChange={(value) => {
+                    const service = services.find((s) => s.service_id === value)
+                    form.setFieldsValue({ service_name: service?.name || '' })
                   }}
                   options={services.map((s) => ({
                     value: s.service_id,
@@ -320,8 +356,9 @@ const Appointment = () => {
             <Col span={12}>
               <Form.Item name="employee_id" label="服务员工">
                 <Select
-                  onChange={(value, option) => {
-                    form.setFieldsValue({ employee_name: option.label })
+                  onChange={(value) => {
+                    const employee = employees.find((e) => e.employee_id === value)
+                    form.setFieldsValue({ employee_name: employee?.name || '' })
                   }}
                   options={employees.map((e) => ({
                     value: e.employee_id,
@@ -373,6 +410,89 @@ const Appointment = () => {
             </Button>
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title="服务完成确认 - 耗材库存检查"
+        open={stockCheckVisible}
+        onCancel={() => setStockCheckVisible(false)}
+        onOk={confirmComplete}
+        okText="确认完成服务"
+        cancelText="取消"
+        okButtonProps={{ disabled: !stockCheckResult?.sufficient }}
+        width={520}
+      >
+        {stockCheckResult && (
+          <>
+            {!stockCheckResult.has_template ? (
+              <Alert
+                message="该服务项目未配置耗材模板"
+                description="完成服务将不会自动扣减任何耗材库存。"
+                type="info"
+                showIcon
+                style={{ marginBottom: 16 }}
+              />
+            ) : stockCheckResult.sufficient ? (
+              <Alert
+                message="库存充足，可正常完成服务"
+                description="完成服务后将自动扣减以下耗材库存："
+                type="success"
+                showIcon
+                style={{ marginBottom: 16 }}
+              />
+            ) : (
+              <Alert
+                message="库存不足，无法完成服务"
+                description="请先补充耗材库存后再办理服务完成。"
+                type="error"
+                showIcon
+                icon={<ExclamationCircleOutlined />}
+                style={{ marginBottom: 16 }}
+              />
+            )}
+
+            {stockCheckResult.has_template && stockCheckResult.items.length > 0 && (
+              <div>
+                <div style={{ fontWeight: 600, marginBottom: 8 }}>耗材清单：</div>
+                <List
+                  size="small"
+                  bordered
+                  dataSource={stockCheckResult.items}
+                  renderItem={(item) => (
+                    <List.Item>
+                      <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                        <span>{item.consumable_name}</span>
+                        <Space>
+                          <span>需要: {item.required} {item.unit}</span>
+                          <span>库存: {item.stock} {item.unit}</span>
+                          <Tag color={item.sufficient ? 'green' : 'red'}>
+                            {item.sufficient ? '充足' : '不足'}
+                          </Tag>
+                        </Space>
+                      </Space>
+                    </List.Item>
+                  )}
+                />
+              </div>
+            )}
+
+            {stockCheckResult.insufficient_items.length > 0 && (
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontWeight: 600, marginBottom: 8, color: '#ff4d4f' }}>库存不足详情：</div>
+                <List
+                  size="small"
+                  bordered
+                  dataSource={stockCheckResult.insufficient_items}
+                  renderItem={(item) => (
+                    <List.Item style={{ color: '#ff4d4f' }}>
+                      {item.reason}
+                    </List.Item>
+                  )}
+                />
+              </div>
+            )}
+          </>
+        )}
       </Modal>
     </Card>
   )

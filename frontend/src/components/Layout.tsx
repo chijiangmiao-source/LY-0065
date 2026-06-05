@@ -10,6 +10,7 @@ import {
   FileTextOutlined,
   LogoutOutlined,
   UserOutlined,
+  AppstoreOutlined,
 } from '@ant-design/icons'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { removeToken, getUsername } from '../utils/auth'
@@ -20,6 +21,7 @@ const menuItems = [
   { key: '/dashboard', icon: <DashboardOutlined />, label: '统计看板' },
   { key: '/employee', icon: <TeamOutlined />, label: '员工管理' },
   { key: '/service', icon: <ScissorOutlined />, label: '服务项目' },
+  { key: '/service-consumable-template', icon: <AppstoreOutlined />, label: '服务耗材模板' },
   { key: '/appointment', icon: <CalendarOutlined />, label: '预约登记' },
   { key: '/schedule', icon: <ClockCircleOutlined />, label: '排班管理' },
   { key: '/consumable', icon: <InboxOutlined />, label: '耗材台账' },

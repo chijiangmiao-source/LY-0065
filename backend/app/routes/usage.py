@@ -39,6 +39,8 @@ async def create_usage(usage: UsageCreate, current_user: User = Depends(get_curr
         employee_id=db_usage.employee_id,
         employee_name=db_usage.employee_name,
         usage_date=db_usage.usage_date,
+        source_type=db_usage.source_type,
+        appointment_no=db_usage.appointment_no,
         remark=db_usage.remark,
         created_at=db_usage.created_at
     )
@@ -50,6 +52,10 @@ async def get_usages(
     consumable_name: Optional[str] = Query(None, description="耗材名称"),
     employee_id: Optional[str] = Query(None, description="员工编号"),
     usage_date: Optional[str] = Query(None, description="领用日期"),
+    start_date: Optional[str] = Query(None, description="开始日期"),
+    end_date: Optional[str] = Query(None, description="结束日期"),
+    source_type: Optional[str] = Query(None, description="来源类型(手工/自动扣减)"),
+    appointment_no: Optional[str] = Query(None, description="关联预约编号"),
     current_user: User = Depends(get_current_user)
 ):
     query = {}
@@ -61,7 +67,17 @@ async def get_usages(
         query["employee_id"] = employee_id
     if usage_date:
         query["usage_date"] = usage_date
-    
+    if start_date:
+        query["usage_date"] = query.get("usage_date", {})
+        query["usage_date"]["$gte"] = start_date
+    if end_date:
+        query["usage_date"] = query.get("usage_date", {})
+        query["usage_date"]["$lte"] = end_date
+    if source_type:
+        query["source_type"] = source_type
+    if appointment_no:
+        query["appointment_no"] = appointment_no
+
     usages = await Usage.find(query).sort("-created_at").to_list()
     return [
         UsageResponse(
@@ -73,6 +89,8 @@ async def get_usages(
             employee_id=u.employee_id,
             employee_name=u.employee_name,
             usage_date=u.usage_date,
+            source_type=u.source_type,
+            appointment_no=u.appointment_no,
             remark=u.remark,
             created_at=u.created_at
         ) for u in usages
@@ -93,6 +111,8 @@ async def get_usage(usage_no: str, current_user: User = Depends(get_current_user
         employee_id=usage.employee_id,
         employee_name=usage.employee_name,
         usage_date=usage.usage_date,
+        source_type=usage.source_type,
+        appointment_no=usage.appointment_no,
         remark=usage.remark,
         created_at=usage.created_at
     )
@@ -103,6 +123,9 @@ async def delete_usage(usage_no: str, current_user: User = Depends(get_current_u
     usage = await Usage.find_one(Usage.usage_no == usage_no)
     if not usage:
         raise HTTPException(status_code=404, detail="领用记录不存在")
+
+    if usage.source_type == "自动扣减":
+        raise HTTPException(status_code=400, detail="自动扣减的领用记录不允许删除，请通过取消预约操作")
     
     consumable = await Consumable.find_one(Consumable.consumable_no == usage.consumable_no)
     if consumable:

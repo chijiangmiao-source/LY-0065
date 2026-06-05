@@ -17,6 +17,7 @@ interface Schedule {
 interface EmployeeOption {
   employee_id: string
   name: string
+  status: string
 }
 
 const timeSlots = [

@@ -12,6 +12,8 @@ class Usage(Document):
     employee_id: str = Field(..., description="领用人编号")
     employee_name: str = Field(..., description="领用人姓名")
     usage_date: str = Field(..., description="领用日期(YYYY-MM-DD)")
+    source_type: str = Field(default="手工", description="来源类型(手工/自动扣减)")
+    appointment_no: Optional[str] = Field(None, description="关联预约编号", index=True)
     remark: Optional[str] = Field(None, description="备注")
     created_at: datetime = Field(default_factory=datetime.now)
 
@@ -21,6 +23,8 @@ class Usage(Document):
             [("usage_no", 1)],
             [("consumable_no", 1)],
             [("usage_date", 1)],
+            [("source_type", 1)],
+            [("appointment_no", 1)],
         ]
 
 
@@ -32,6 +36,8 @@ class UsageCreate(BaseModel):
     employee_id: str
     employee_name: str
     usage_date: str
+    source_type: Optional[str] = "手工"
+    appointment_no: Optional[str] = None
     remark: Optional[str] = None
 
 
@@ -49,6 +55,8 @@ class UsageResponse(BaseModel):
     employee_id: str
     employee_name: str
     usage_date: str
+    source_type: str
+    appointment_no: Optional[str]
     remark: Optional[str]
     created_at: datetime
 

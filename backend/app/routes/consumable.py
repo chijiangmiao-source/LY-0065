@@ -14,10 +14,11 @@ def build_consumable_response(c: Consumable) -> ConsumableResponse:
         consumable_no=c.consumable_no,
         name=c.name,
         stock_quantity=c.stock_quantity,
+        warning_threshold=c.warning_threshold,
         applicable_services=c.applicable_services,
         unit=c.unit,
         status=c.status,
-        stock_status=get_stock_status(c.stock_quantity),
+        stock_status=get_stock_status(c.stock_quantity, c.warning_threshold),
         created_at=c.created_at
     )
 

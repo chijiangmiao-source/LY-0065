@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from app.models.appointment import Appointment
 from app.models.schedule import Schedule
 from app.models.usage import Usage
+from app.models.consumable import Consumable, get_stock_status
 from app.models.user import User
 from app.utils.auth import get_current_user
 
@@ -113,6 +114,10 @@ async def get_dashboard_summary(current_user: User = Depends(get_current_user)):
     for a in appointments:
         status_count[a.status] = status_count.get(a.status, 0) + 1
     
+    low_stock_count = await Consumable.find(
+        {"$expr": {"$lt": ["$stock_quantity", "$warning_threshold"]}}
+    ).count()
+
     return {
         "today": {
             "appointments": len(today_appointments),
@@ -122,5 +127,81 @@ async def get_dashboard_summary(current_user: User = Depends(get_current_user)):
             "appointments": total_appointments,
             "schedules": total_schedules
         },
-        "appointment_status": status_count
+        "appointment_status": status_count,
+        "low_stock_count": low_stock_count
+    }
+
+
+@router.get("/consumables/low-stock")
+async def get_low_stock_warning(
+    status: str = Query(None, description="业务状态过滤"),
+    current_user: User = Depends(get_current_user)
+):
+    query = {"$expr": {"$lt": ["$stock_quantity", "$warning_threshold"]}}
+    if status:
+        query["status"] = status
+
+    consumables = await Consumable.find(query).sort("stock_quantity").to_list()
+    result = []
+    for c in consumables:
+        result.append({
+            "id": str(c.id),
+            "consumable_no": c.consumable_no,
+            "name": c.name,
+            "stock_quantity": c.stock_quantity,
+            "warning_threshold": c.warning_threshold,
+            "unit": c.unit,
+            "stock_status": get_stock_status(c.stock_quantity, c.warning_threshold),
+            "status": c.status,
+            "gap": c.warning_threshold - c.stock_quantity
+        })
+    return {
+        "total": len(result),
+        "items": result
+    }
+
+
+@router.get("/usages/7-day-trend")
+async def get_usage_7day_trend(
+    source_type: str = Query(None, description="来源类型(手工/自动扣减)，默认全部"),
+    current_user: User = Depends(get_current_user)
+):
+    today = datetime.now()
+    days = []
+    trend_data = []
+    auto_count = 0
+    manual_count = 0
+
+    for i in range(6, -1, -1):
+        date = today - timedelta(days=i)
+        date_str = date.strftime("%Y-%m-%d")
+        days.append(date_str)
+
+        query = {"usage_date": date_str}
+        if source_type:
+            query["source_type"] = source_type
+
+        date_usages = await Usage.find(query).to_list()
+        total_qty = sum(u.quantity for u in date_usages)
+        auto_qty = sum(u.quantity for u in date_usages if u.source_type == "自动扣减")
+        manual_qty = sum(u.quantity for u in date_usages if u.source_type == "手工")
+
+        auto_count += auto_qty
+        manual_count += manual_qty
+
+        trend_data.append({
+            "date": date_str,
+            "label": date.strftime("%m-%d"),
+            "total": total_qty,
+            "自动扣减": auto_qty,
+            "手工": manual_qty
+        })
+
+    return {
+        "trend": trend_data,
+        "summary": {
+            "total": auto_count + manual_count,
+            "auto_deduct": auto_count,
+            "manual": manual_count
+        }
     }

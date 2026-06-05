@@ -8,6 +8,7 @@ interface Consumable {
   consumable_no: string
   name: string
   stock_quantity: number
+  warning_threshold: number
   applicable_services: string[]
   unit: string
   status: string
@@ -18,6 +19,7 @@ interface Consumable {
 interface ServiceOption {
   service_id: string
   name: string
+  status: string
 }
 
 const stockStatusColors: Record<string, string> = {
@@ -145,6 +147,12 @@ const Consumable = () => {
       ),
     },
     {
+      title: '预警阈值',
+      dataIndex: 'warning_threshold',
+      key: 'warning_threshold',
+      render: (val: number, record: Consumable) => `${val} ${record.unit}`,
+    },
+    {
       title: '库存状态',
       dataIndex: 'stock_status',
       key: 'stock_status',
@@ -264,6 +272,17 @@ const Consumable = () => {
                 <InputNumber min={0} style={{ width: '100%' }} />
               </Form.Item>
             </Col>
+            <Col span={12}>
+              <Form.Item
+                name="warning_threshold"
+                label="预警阈值"
+                rules={[{ required: true, message: '请输入预警阈值' }]}
+              >
+                <InputNumber min={0} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={16}>
             <Col span={12}>
               <Form.Item
                 name="unit"

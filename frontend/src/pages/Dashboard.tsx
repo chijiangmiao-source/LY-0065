@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
-import { Row, Col, Card, Statistic, DatePicker, Table } from 'antd'
-import { CalendarOutlined, TeamOutlined, InboxOutlined, CheckCircleOutlined } from '@ant-design/icons'
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, PieChart, Pie, Cell, ResponsiveContainer } from 'recharts'
+import { Row, Col, Card, Statistic, DatePicker, Table, Tag } from 'antd'
+import { CalendarOutlined, TeamOutlined, InboxOutlined, CheckCircleOutlined, WarningOutlined, LineChartOutlined } from '@ant-design/icons'
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, PieChart, Pie, Cell, ResponsiveContainer, LineChart, Line } from 'recharts'
 import dayjs from 'dayjs'
 import request from '../utils/request'
 
@@ -35,6 +35,41 @@ interface DashboardSummary {
     schedules: number
   }
   appointment_status: Record<string, number>
+  low_stock_count: number
+}
+
+interface LowStockItem {
+  id: string
+  consumable_no: string
+  name: string
+  stock_quantity: number
+  warning_threshold: number
+  unit: string
+  stock_status: string
+  status: string
+  gap: number
+}
+
+interface LowStockWarning {
+  total: number
+  items: LowStockItem[]
+}
+
+interface UsageTrendData {
+  date: string
+  label: string
+  total: number
+  自动扣减: number
+  手工: number
+}
+
+interface Usage7DayTrend {
+  trend: UsageTrendData[]
+  summary: {
+    total: number
+    auto_deduct: number
+    manual: number
+  }
 }
 
 const Dashboard = () => {
@@ -42,6 +77,8 @@ const Dashboard = () => {
   const [appointmentStats, setAppointmentStats] = useState<AppointmentStats | null>(null)
   const [scheduleDistribution, setScheduleDistribution] = useState<ScheduleDistribution | null>(null)
   const [consumableRanking, setConsumableRanking] = useState<ConsumableRanking | null>(null)
+  const [lowStockWarning, setLowStockWarning] = useState<LowStockWarning | null>(null)
+  const [usageTrend, setUsageTrend] = useState<Usage7DayTrend | null>(null)
   const [dateRange, setDateRange] = useState<[dayjs.Dayjs | null, dayjs.Dayjs | null] | null>(null)
 
   const fetchSummary = async () => {
@@ -50,6 +87,24 @@ const Dashboard = () => {
       setSummary(res)
     } catch (error) {
       console.error('Fetch summary error:', error)
+    }
+  }
+
+  const fetchLowStockWarning = async () => {
+    try {
+      const res = await request.get('/dashboard/consumables/low-stock') as LowStockWarning
+      setLowStockWarning(res)
+    } catch (error) {
+      console.error('Fetch low stock warning error:', error)
+    }
+  }
+
+  const fetchUsageTrend = async () => {
+    try {
+      const res = await request.get('/dashboard/usages/7-day-trend') as Usage7DayTrend
+      setUsageTrend(res)
+    } catch (error) {
+      console.error('Fetch usage trend error:', error)
     }
   }
 
@@ -78,6 +133,8 @@ const Dashboard = () => {
   useEffect(() => {
     fetchSummary()
     fetchStats()
+    fetchLowStockWarning()
+    fetchUsageTrend()
   }, [dateRange])
 
   const appointmentChartData = appointmentStats
@@ -93,6 +150,45 @@ const Dashboard = () => {
     { title: '耗材名称', dataIndex: 'name', key: 'name' },
     { title: '消耗数量', dataIndex: 'quantity', key: 'quantity' },
   ]
+
+  const lowStockColumns = [
+    { title: '耗材编号', dataIndex: 'consumable_no', key: 'consumable_no' },
+    { title: '耗材名称', dataIndex: 'name', key: 'name' },
+    {
+      title: '当前库存',
+      dataIndex: 'stock_quantity',
+      key: 'stock_quantity',
+      render: (val: number, record: LowStockItem) => `${val} ${record.unit}`,
+    },
+    {
+      title: '预警阈值',
+      dataIndex: 'warning_threshold',
+      key: 'warning_threshold',
+      render: (val: number, record: LowStockItem) => `${val} ${record.unit}`,
+    },
+    {
+      title: '缺口',
+      dataIndex: 'gap',
+      key: 'gap',
+      render: (val: number, record: LowStockItem) => (
+        <Tag color="red">差 {val} {record.unit}</Tag>
+      ),
+    },
+    {
+      title: '库存状态',
+      dataIndex: 'stock_status',
+      key: 'stock_status',
+      render: (status: string) => (
+        <Tag color={status === '缺货' ? 'red' : 'orange'}>{status}</Tag>
+      ),
+    },
+  ]
+
+  const stockStatusColors: Record<string, string> = {
+    '正常': 'green',
+    '库存不足': 'orange',
+    '缺货': 'red',
+  }
 
   return (
     <div>
@@ -136,10 +232,28 @@ const Dashboard = () => {
         <Col span={6}>
           <Card>
             <Statistic
-              title="总排班数"
-              value={summary?.total.schedules || 0}
-              prefix={<CheckCircleOutlined />}
-              valueStyle={{ color: '#eb2f96' }}
+              title="低库存预警"
+              value={summary?.low_stock_count || 0}
+              prefix={<WarningOutlined />}
+              valueStyle={{ color: summary?.low_stock_count ? '#ff4d4f' : '#52c41a' }}
+            />
+          </Card>
+        </Col>
+      </Row>
+
+      <Row gutter={16} style={{ marginBottom: 24 }}>
+        <Col span={24}>
+          <Card
+            title={<span><WarningOutlined style={{ color: '#ff4d4f', marginRight: 8 }} />低库存预警列表</span>}
+            extra={<span>共 {lowStockWarning?.total || 0} 种耗材</span>}
+          >
+            <Table
+              columns={lowStockColumns}
+              dataSource={lowStockWarning?.items || []}
+              rowKey="id"
+              pagination={{ pageSize: 5 }}
+              size="small"
+              locale={{ emptyText: '暂无低库存耗材，库存状态良好' }}
             />
           </Card>
         </Col>
@@ -180,6 +294,34 @@ const Dashboard = () => {
                 <Legend />
                 <Bar dataKey="排班数量" fill="#1890ff" />
               </BarChart>
+            </ResponsiveContainer>
+          </Card>
+        </Col>
+      </Row>
+
+      <Row gutter={16} style={{ marginBottom: 24 }}>
+        <Col span={24}>
+          <Card
+            title={<span><LineChartOutlined style={{ marginRight: 8 }} />近7日耗材扣减趋势</span>}
+            extra={
+              <span>
+                近7日总扣减: <strong>{usageTrend?.summary.total || 0}</strong>
+                ，自动扣减: <Tag color="blue">{usageTrend?.summary.auto_deduct || 0}</Tag>
+                ，手工: <Tag color="green">{usageTrend?.summary.manual || 0}</Tag>
+              </span>
+            }
+          >
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={usageTrend?.trend || []}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="label" />
+                <YAxis />
+                <Tooltip />
+                <Legend />
+                <Line type="monotone" dataKey="自动扣减" stroke="#1890ff" strokeWidth={2} />
+                <Line type="monotone" dataKey="手工" stroke="#52c41a" strokeWidth={2} />
+                <Line type="monotone" dataKey="total" stroke="#722ed1" strokeWidth={2} strokeDasharray="5 5" name="合计" />
+              </LineChart>
             </ResponsiveContainer>
           </Card>
         </Col>

@@ -31,7 +31,12 @@ request.interceptors.response.use(
         localStorage.removeItem('username')
         window.location.href = '/login'
       } else {
-        message.error(data.detail || '请求失败')
+        if (typeof data.detail === 'object' && data.detail !== null) {
+          const msg = data.detail.message || data.detail.insufficient_items?.join('；') || '请求失败'
+          message.error(msg, 5)
+        } else {
+          message.error(data.detail || '请求失败')
+        }
       }
     } else {
       message.error('网络错误，请稍后重试')
