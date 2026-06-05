@@ -10,19 +10,9 @@ from app.models.operation_log import OperationLog, OperationLogResponse
 from app.models.user import User
 from app.utils.auth import get_current_user
 from app.utils.log import add_operation_log
+from app.services.number_service import NumberService
 
 router = APIRouter()
-
-
-# ==================== 会员等级管理 ====================
-
-async def generate_level_id() -> str:
-    last = await MemberLevel.find_all().sort("-level_id").first_or_none()
-    if last:
-        seq = int(last.level_id[2:]) + 1
-    else:
-        seq = 1
-    return f"LV{seq:03d}"
 
 
 @router.post("/levels", response_model=MemberLevelResponse)
@@ -34,7 +24,7 @@ async def create_member_level(level: MemberLevelCreate, current_user: User = Dep
     if existing_name:
         raise HTTPException(status_code=400, detail="等级名称已存在")
     if not level.level_id:
-        level.level_id = await generate_level_id()
+        level.level_id = await NumberService.generate_level_id()
     db_level = MemberLevel(**level.model_dump())
     await db_level.insert()
     await add_operation_log(
@@ -145,16 +135,6 @@ async def delete_member_level(level_id: str, current_user: User = Depends(get_cu
 
 # ==================== 会员档案管理 ====================
 
-async def generate_member_no() -> str:
-    today = datetime.now().strftime("%Y%m")
-    prefix = f"M{today}"
-    last = await Member.find(Member.member_no.startswith(prefix)).sort("-member_no").first_or_none()
-    if last:
-        seq = int(last.member_no[-4:]) + 1
-    else:
-        seq = 1
-    return f"{prefix}{seq:04d}"
-
 
 @router.post("", response_model=MemberResponse)
 async def create_member(member: MemberCreate, current_user: User = Depends(get_current_user)):
@@ -163,7 +143,7 @@ async def create_member(member: MemberCreate, current_user: User = Depends(get_c
         if existing:
             raise HTTPException(status_code=400, detail="会员编号已存在")
     else:
-        member.member_no = await generate_member_no()
+        member.member_no = await NumberService.generate_member_no()
     existing_phone = await Member.find_one(Member.phone == member.phone)
     if existing_phone:
         raise HTTPException(status_code=400, detail="该手机号已注册会员")
@@ -343,16 +323,6 @@ async def delete_member(member_no: str, current_user: User = Depends(get_current
 
 # ==================== 会员储值充值 ====================
 
-async def generate_recharge_no() -> str:
-    today = datetime.now().strftime("%Y%m%d")
-    prefix = f"R{today}"
-    last = await MemberRecharge.find(MemberRecharge.recharge_no.startswith(prefix)).sort("-recharge_no").first_or_none()
-    if last:
-        seq = int(last.recharge_no[-4:]) + 1
-    else:
-        seq = 1
-    return f"{prefix}{seq:04d}"
-
 
 @router.post("/{member_no}/recharge", response_model=MemberRechargeResponse)
 async def recharge_member(member_no: str, recharge: MemberRechargeCreate, current_user: User = Depends(get_current_user)):
@@ -369,7 +339,7 @@ async def recharge_member(member_no: str, recharge: MemberRechargeCreate, curren
     balance_after = balance_before + total_amount
 
     db_recharge = MemberRecharge(
-        recharge_no=await generate_recharge_no(),
+        recharge_no=await NumberService.generate_recharge_no(),
         member_no=member.member_no,
         member_name=member.name,
         phone=member.phone,
@@ -468,16 +438,6 @@ async def get_member_recharges(
 
 
 # ==================== 消费记录 ====================
-
-async def generate_consumption_no() -> str:
-    today = datetime.now().strftime("%Y%m%d")
-    prefix = f"C{today}"
-    last = await MemberConsumption.find(MemberConsumption.consumption_no.startswith(prefix)).sort("-consumption_no").first_or_none()
-    if last:
-        seq = int(last.consumption_no[-4:]) + 1
-    else:
-        seq = 1
-    return f"{prefix}{seq:04d}"
 
 
 @router.get("/{member_no}/consumptions", response_model=List[MemberConsumptionResponse])

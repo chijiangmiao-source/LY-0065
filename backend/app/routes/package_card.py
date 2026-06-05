@@ -10,41 +10,9 @@ from app.models.service import Service
 from app.models.user import User
 from app.utils.auth import get_current_user
 from app.utils.log import add_operation_log
+from app.services.number_service import NumberService
 
 router = APIRouter()
-
-
-async def generate_package_no() -> str:
-    today = datetime.now().strftime("%Y%m")
-    prefix = f"P{today}"
-    last = await PackageCard.find(PackageCard.package_no.startswith(prefix)).sort("-package_no").first_or_none()
-    if last:
-        seq = int(last.package_no[-4:]) + 1
-    else:
-        seq = 1
-    return f"{prefix}{seq:04d}"
-
-
-async def generate_member_package_no() -> str:
-    today = datetime.now().strftime("%Y%m%d")
-    prefix = f"MP{today}"
-    last = await MemberPackage.find(MemberPackage.member_package_no.startswith(prefix)).sort("-member_package_no").first_or_none()
-    if last:
-        seq = int(last.member_package_no[-4:]) + 1
-    else:
-        seq = 1
-    return f"{prefix}{seq:04d}"
-
-
-async def generate_redemption_no() -> str:
-    today = datetime.now().strftime("%Y%m%d")
-    prefix = f"R{today}"
-    last = await PackageRedemption.find(PackageRedemption.redemption_no.startswith(prefix)).sort("-redemption_no").first_or_none()
-    if last:
-        seq = int(last.redemption_no[-4:]) + 1
-    else:
-        seq = 1
-    return f"{prefix}{seq:04d}"
 
 
 async def check_and_update_package_expiry(member_package: MemberPackage) -> MemberPackage:
@@ -64,7 +32,7 @@ async def create_package_card(
         if existing:
             raise HTTPException(status_code=400, detail="套餐编号已存在")
     else:
-        package.package_no = await generate_package_no()
+        package.package_no = await NumberService.generate_package_no()
 
     existing_name = await PackageCard.find_one(PackageCard.name == package.name)
     if existing_name:
@@ -272,7 +240,7 @@ async def activate_member_package(
     expire_date = datetime.now() + timedelta(days=package.valid_days)
 
     db_member_package = MemberPackage(
-        member_package_no=await generate_member_package_no(),
+        member_package_no=await NumberService.generate_member_package_no(),
         member_no=member.member_no,
         member_name=member.name,
         phone=member.phone,
