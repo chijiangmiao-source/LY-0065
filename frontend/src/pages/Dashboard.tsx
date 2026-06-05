@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react'
-import { Row, Col, Card, Statistic, DatePicker, Table, Tag } from 'antd'
+import { Row, Col, Card, Statistic, Table, Tag } from 'antd'
 import { CalendarOutlined, TeamOutlined, InboxOutlined, CheckCircleOutlined, WarningOutlined, LineChartOutlined } from '@ant-design/icons'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, PieChart, Pie, Cell, ResponsiveContainer, LineChart, Line } from 'recharts'
-import dayjs from 'dayjs'
 import request from '../utils/request'
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d']
@@ -79,7 +78,6 @@ const Dashboard = () => {
   const [consumableRanking, setConsumableRanking] = useState<ConsumableRanking | null>(null)
   const [lowStockWarning, setLowStockWarning] = useState<LowStockWarning | null>(null)
   const [usageTrend, setUsageTrend] = useState<Usage7DayTrend | null>(null)
-  const [dateRange, setDateRange] = useState<[dayjs.Dayjs | null, dayjs.Dayjs | null] | null>(null)
 
   const fetchSummary = async () => {
     try {
@@ -110,17 +108,10 @@ const Dashboard = () => {
 
   const fetchStats = async () => {
     try {
-      const params = new URLSearchParams()
-      if (dateRange && dateRange[0]) {
-        params.append('start_date', dateRange[0].format('YYYY-MM-DD'))
-      }
-      if (dateRange && dateRange[1]) {
-        params.append('end_date', dateRange[1].format('YYYY-MM-DD'))
-      }
       const [appointmentRes, scheduleRes, consumableRes] = await Promise.all([
-        request.get(`/dashboard/appointments/count?${params.toString()}`) as Promise<AppointmentStats>,
-        request.get(`/dashboard/schedules/distribution?${params.toString()}`) as Promise<ScheduleDistribution>,
-        request.get(`/dashboard/consumables/ranking?${params.toString()}`) as Promise<ConsumableRanking>,
+        request.get('/dashboard/appointments/count') as Promise<AppointmentStats>,
+        request.get('/dashboard/schedules/distribution') as Promise<ScheduleDistribution>,
+        request.get('/dashboard/consumables/ranking') as Promise<ConsumableRanking>,
       ])
       setAppointmentStats(appointmentRes)
       setScheduleDistribution(scheduleRes)
@@ -135,7 +126,7 @@ const Dashboard = () => {
     fetchStats()
     fetchLowStockWarning()
     fetchUsageTrend()
-  }, [dateRange])
+  }, [])
 
   const appointmentChartData = appointmentStats
     ? Object.entries(appointmentStats.by_status).map(([name, value]) => ({ name, value }))
@@ -192,12 +183,6 @@ const Dashboard = () => {
 
   return (
     <div>
-      <div style={{ marginBottom: 16, textAlign: 'right' }}>
-        <DatePicker.RangePicker
-          onChange={(dates) => setDateRange(dates as [dayjs.Dayjs | null, dayjs.Dayjs | null] | null)}
-        />
-      </div>
-
       <Row gutter={16} style={{ marginBottom: 24 }}>
         <Col span={6}>
           <Card>

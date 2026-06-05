@@ -115,7 +115,7 @@ async def get_dashboard_summary(current_user: User = Depends(get_current_user)):
         status_count[a.status] = status_count.get(a.status, 0) + 1
     
     low_stock_count = await Consumable.find(
-        {"$expr": {"$lt": ["$stock_quantity", "$warning_threshold"]}}
+        {"$expr": {"$lt": ["$stock_quantity", "$warning_threshold"]}, "status": "正常"}
     ).count()
 
     return {
@@ -134,12 +134,9 @@ async def get_dashboard_summary(current_user: User = Depends(get_current_user)):
 
 @router.get("/consumables/low-stock")
 async def get_low_stock_warning(
-    status: str = Query(None, description="业务状态过滤"),
     current_user: User = Depends(get_current_user)
 ):
-    query = {"$expr": {"$lt": ["$stock_quantity", "$warning_threshold"]}}
-    if status:
-        query["status"] = status
+    query = {"$expr": {"$lt": ["$stock_quantity", "$warning_threshold"]}, "status": "正常"}
 
     consumables = await Consumable.find(query).sort("stock_quantity").to_list()
     result = []

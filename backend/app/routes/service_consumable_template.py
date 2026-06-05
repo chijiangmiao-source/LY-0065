@@ -38,6 +38,18 @@ async def create_template(template: ServiceConsumableTemplateCreate, current_use
     if not service:
         raise HTTPException(status_code=400, detail="服务项目不存在")
 
+    new_status = template.status or "启用"
+    if new_status == "启用":
+        conflict = await ServiceConsumableTemplate.find_one(
+            ServiceConsumableTemplate.service_id == template.service_id,
+            ServiceConsumableTemplate.status == "启用"
+        )
+        if conflict:
+            raise HTTPException(
+                status_code=400,
+                detail=f"服务项目【{template.service_name or template.service_id}】已存在启用的耗材模板（{conflict.template_id}），一个服务只能绑定一套启用的模板"
+            )
+
     for item in template.items:
         if item.quantity <= 0:
             raise HTTPException(status_code=400, detail=f"耗材 {item.consumable_name} 的用量必须大于0")
@@ -117,6 +129,19 @@ async def update_template(template_id: str, template_update: ServiceConsumableTe
         service = await Service.find_one(Service.service_id == update_data["service_id"])
         if not service:
             raise HTTPException(status_code=400, detail="服务项目不存在")
+
+    target_service_id = update_data.get("service_id", template.service_id)
+    target_status = update_data.get("status", template.status)
+    if target_status == "启用":
+        conflict = await ServiceConsumableTemplate.find_one(
+            ServiceConsumableTemplate.service_id == target_service_id,
+            ServiceConsumableTemplate.status == "启用"
+        )
+        if conflict and str(conflict.id) != str(template.id):
+            raise HTTPException(
+                status_code=400,
+                detail=f"服务项目【{conflict.service_name or target_service_id}】已存在启用的耗材模板（{conflict.template_id}），一个服务只能绑定一套启用的模板"
+            )
 
     for key, value in update_data.items():
         setattr(template, key, value)
