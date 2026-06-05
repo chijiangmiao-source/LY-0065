@@ -15,6 +15,10 @@ class Appointment(Document):
     appointment_date: str = Field(..., description="预约日期(YYYY-MM-DD)")
     time_slot: str = Field(..., description="预约时段")
     status: str = Field(default="待服务", description="预约状态")
+    pay_method: Optional[str] = Field(None, description="支付方式(余额/现金)")
+    member_no: Optional[str] = Field(None, description="关联会员编号")
+    pay_amount: Optional[float] = Field(None, description="实付金额")
+    discount_rate: Optional[float] = Field(None, description="使用折扣率")
     created_at: datetime = Field(default_factory=datetime.now)
 
     class Settings:
@@ -23,6 +27,7 @@ class Appointment(Document):
             [("appointment_no", 1)],
             [("appointment_date", 1), ("time_slot", 1)],
             [("status", 1)],
+            [("member_no", 1)],
         ]
 
 
@@ -51,6 +56,11 @@ class AppointmentUpdate(BaseModel):
     status: Optional[str] = None
 
 
+class AppointmentCompleteRequest(BaseModel):
+    pay_method: str = Field(..., description="支付方式(余额/现金)")
+    member_no: Optional[str] = Field(None, description="会员编号(余额支付时必填)")
+
+
 class AppointmentResponse(BaseModel):
     id: str
     appointment_no: str
@@ -63,6 +73,10 @@ class AppointmentResponse(BaseModel):
     appointment_date: str
     time_slot: str
     status: str
+    pay_method: Optional[str]
+    member_no: Optional[str]
+    pay_amount: Optional[float]
+    discount_rate: Optional[float]
     created_at: datetime
 
     class Config:

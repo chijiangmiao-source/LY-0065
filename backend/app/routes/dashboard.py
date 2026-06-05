@@ -6,6 +6,9 @@ from app.models.appointment import Appointment
 from app.models.schedule import Schedule
 from app.models.usage import Usage
 from app.models.consumable import Consumable, get_stock_status
+from app.models.member import Member
+from app.models.member_recharge import MemberRecharge
+from app.models.member_consumption import MemberConsumption
 from app.models.user import User
 from app.utils.auth import get_current_user
 
@@ -118,6 +121,11 @@ async def get_dashboard_summary(current_user: User = Depends(get_current_user)):
         {"$expr": {"$lt": ["$stock_quantity", "$warning_threshold"]}, "status": "正常"}
     ).count()
 
+    total_members = await Member.find(Member.status == "正常").count()
+    all_members = await Member.find_all().to_list()
+    total_balance = sum(m.balance for m in all_members)
+    total_recharge_amount = sum(m.total_recharge for m in all_members)
+
     return {
         "today": {
             "appointments": len(today_appointments),
@@ -128,7 +136,12 @@ async def get_dashboard_summary(current_user: User = Depends(get_current_user)):
             "schedules": total_schedules
         },
         "appointment_status": status_count,
-        "low_stock_count": low_stock_count
+        "low_stock_count": low_stock_count,
+        "members": {
+            "total_members": total_members,
+            "total_balance": round(total_balance, 2),
+            "total_recharge_amount": round(total_recharge_amount, 2)
+        }
     }
 
 
@@ -201,4 +214,92 @@ async def get_usage_7day_trend(
             "auto_deduct": auto_count,
             "manual": manual_count
         }
+    }
+
+
+@router.get("/members/recharge-7-day-trend")
+async def get_member_recharge_7day_trend(current_user: User = Depends(get_current_user)):
+    today = datetime.now()
+    trend_data = []
+    total_recharge = 0
+    total_gift = 0
+
+    for i in range(6, -1, -1):
+        date = today - timedelta(days=i)
+        date_str = date.strftime("%Y-%m-%d")
+        date_start = datetime.strptime(date_str, "%Y-%m-%d")
+        date_end = date_start.replace(hour=23, minute=59, second=59)
+
+        date_recharges = await MemberRecharge.find(
+            {"created_at": {"$gte": date_start, "$lte": date_end}}
+        ).to_list()
+        day_recharge = sum(r.recharge_amount for r in date_recharges)
+        day_gift = sum(r.gift_amount for r in date_recharges)
+        total_recharge += day_recharge
+        total_gift += day_gift
+
+        trend_data.append({
+            "date": date_str,
+            "label": date.strftime("%m-%d"),
+            "recharge_amount": round(day_recharge, 2),
+            "gift_amount": round(day_gift, 2),
+            "total": round(day_recharge + day_gift, 2),
+            "count": len(date_recharges)
+        })
+
+    return {
+        "trend": trend_data,
+        "summary": {
+            "total_recharge": round(total_recharge, 2),
+            "total_gift": round(total_gift, 2),
+            "grand_total": round(total_recharge + total_gift, 2)
+        }
+    }
+
+
+@router.get("/members/consumption-ranking")
+async def get_member_consumption_ranking(
+    start_date: str = Query(None, description="开始日期"),
+    end_date: str = Query(None, description="结束日期"),
+    top_n: int = Query(10, description="排名数量"),
+    current_user: User = Depends(get_current_user)
+):
+    query: dict = {}
+    if start_date:
+        date_start = datetime.strptime(start_date, "%Y-%m-%d")
+        query["created_at"] = {"$gte": date_start}
+    if end_date:
+        date_end = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+        query.setdefault("created_at", {})
+        query["created_at"]["$lte"] = date_end
+
+    consumptions = await MemberConsumption.find(query).to_list()
+
+    member_consumption: Dict[str, Dict] = {}
+    for c in consumptions:
+        if not c.member_no:
+            continue
+        key = f"{c.member_name or '未知'}({c.member_no})"
+        if key not in member_consumption:
+            member_consumption[key] = {"total_amount": 0, "count": 0}
+        member_consumption[key]["total_amount"] += c.actual_amount
+        member_consumption[key]["count"] += 1
+
+    sorted_items = sorted(
+        member_consumption.items(),
+        key=lambda x: x[1]["total_amount"],
+        reverse=True
+    )
+    top_items = sorted_items[:top_n]
+
+    return {
+        "ranking": [
+            {
+                "name": k,
+                "total_amount": round(v["total_amount"], 2),
+                "count": v["count"],
+                "rank": i + 1
+            }
+            for i, (k, v) in enumerate(top_items)
+        ]
     }

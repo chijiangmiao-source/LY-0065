@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Table, Button, Modal, Form, Input, Select, message, Space, Card, DatePicker, Tag, Row, Col, List, Alert } from 'antd'
-import { PlusOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, ExclamationCircleOutlined } from '@ant-design/icons'
+import { Table, Button, Modal, Form, Input, Select, message, Space, Card, DatePicker, Tag, Row, Col, List, Alert, Descriptions, Statistic } from 'antd'
+import { PlusOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, ExclamationCircleOutlined, WalletOutlined, DollarOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import request from '../utils/request'
 
@@ -16,12 +16,17 @@ interface Appointment {
   appointment_date: string
   time_slot: string
   status: string
+  pay_method?: string
+  member_no?: string
+  pay_amount?: number
+  discount_rate?: number
   created_at: string
 }
 
 interface ServiceOption {
   service_id: string
   name: string
+  price: number
   status: string
 }
 
@@ -29,6 +34,31 @@ interface EmployeeOption {
   employee_id: string
   name: string
   status: string
+}
+
+interface MemberOption {
+  member_no: string
+  name: string
+  phone: string
+  level_name: string
+  balance: number
+  discount_rate: number
+}
+
+interface StockCheckItem {
+  consumable_no: string
+  consumable_name: string
+  required: number
+  stock: number
+  unit: string
+  sufficient: boolean
+}
+
+interface StockCheckResult {
+  has_template: boolean
+  items: StockCheckItem[]
+  sufficient: boolean
+  insufficient_items: Array<{ consumable_no: string; consumable_name: string; required: number; stock: number; unit: string; reason: string }>
 }
 
 const timeSlots = [
@@ -50,23 +80,7 @@ const statusColors: Record<string, string> = {
   '已取消': 'red',
 }
 
-interface StockCheckItem {
-  consumable_no: string
-  consumable_name: string
-  required: number
-  stock: number
-  unit: string
-  sufficient: boolean
-}
-
-interface StockCheckResult {
-  has_template: boolean
-  items: StockCheckItem[]
-  sufficient: boolean
-  insufficient_items: Array<{ consumable_no: string; consumable_name: string; required: number; stock: number; unit: string; reason: string }>
-}
-
-const Appointment = () => {
+const AppointmentPage = () => {
   const [data, setData] = useState<Appointment[]>([])
   const [services, setServices] = useState<ServiceOption[]>([])
   const [employees, setEmployees] = useState<EmployeeOption[]>([])
@@ -81,6 +95,22 @@ const Appointment = () => {
   const [stockCheckVisible, setStockCheckVisible] = useState(false)
   const [stockCheckResult, setStockCheckResult] = useState<StockCheckResult | null>(null)
   const [pendingCompleteNo, setPendingCompleteNo] = useState<string>('')
+
+  const [payVisible, setPayVisible] = useState(false)
+  const [payMethod, setPayMethod] = useState<'余额' | '现金'>('现金')
+  const [selectedMember, setSelectedMember] = useState<MemberOption | null>(null)
+  const [memberSearchPhone, setMemberSearchPhone] = useState('')
+  const [memberSearching, setMemberSearching] = useState(false)
+  const [currentService, setCurrentService] = useState<ServiceOption | null>(null)
+  const [completingAppointment, setCompletingAppointment] = useState<Appointment | null>(null)
+
+  const actualAmount = (() => {
+    if (!currentService) return 0
+    if (payMethod === '余额' && selectedMember) {
+      return Math.round(currentService.price * selectedMember.discount_rate * 100) / 100
+    }
+    return currentService.price
+  })()
 
   const fetchData = async () => {
     setLoading(true)
@@ -144,24 +174,78 @@ const Appointment = () => {
     }
   }
 
-  const handleComplete = async (appointment_no: string) => {
+  const handleComplete = async (record: Appointment) => {
+    setCompletingAppointment(record)
+    const service = services.find(s => s.service_id === record.service_id)
+    setCurrentService(service || null)
+    setPayMethod('现金')
+    setSelectedMember(null)
+    setMemberSearchPhone(record.phone)
     try {
-      const res = await request.get(`/appointments/${appointment_no}/stock-check`) as StockCheckResult
+      const res = await request.get(`/appointments/${record.appointment_no}/stock-check`) as StockCheckResult
       setStockCheckResult(res)
-      setPendingCompleteNo(appointment_no)
+      setPendingCompleteNo(record.appointment_no)
       setStockCheckVisible(true)
     } catch (error) {
       console.error('Stock check error:', error)
     }
   }
 
+  const goToPay = () => {
+    setStockCheckVisible(false)
+    setPayVisible(true)
+  }
+
+  const searchMemberByPhone = async () => {
+    if (!memberSearchPhone) {
+      message.warning('请输入手机号')
+      return
+    }
+    setMemberSearching(true)
+    try {
+      const member = await request.get(`/members/phone/${memberSearchPhone}`) as MemberOption
+      const level = await request.get(`/members/levels/${(member as any).level_id}`) as any
+      setSelectedMember({
+        ...member,
+        discount_rate: level?.discount_rate ?? 1.0,
+      })
+      message.success(`找到会员：${member.name}`)
+    } catch (error) {
+      setSelectedMember(null)
+      message.error('未找到该手机号对应的会员')
+    } finally {
+      setMemberSearching(false)
+    }
+  }
+
   const confirmComplete = async () => {
     if (!pendingCompleteNo) return
     try {
-      await request.post(`/appointments/${pendingCompleteNo}/complete`)
-      message.success('服务已完成，耗材已自动扣减')
+      const payload: any = { pay_method: payMethod }
+      if (payMethod === '余额') {
+        if (!selectedMember) {
+          message.error('余额支付请先选择会员')
+          return
+        }
+        if (selectedMember.balance < actualAmount) {
+          message.error(`会员余额不足，当前余额 ¥${selectedMember.balance.toFixed(2)}，需支付 ¥${actualAmount.toFixed(2)}`)
+          return
+        }
+        if (selectedMember.phone !== completingAppointment?.phone) {
+          message.error('会员手机号与预约手机号不一致')
+          return
+        }
+        payload.member_no = selectedMember.member_no
+      }
+      await request.post(`/appointments/${pendingCompleteNo}/complete`, payload)
+      message.success(payMethod === '余额'
+        ? `服务已完成，已从会员余额扣除 ¥${actualAmount.toFixed(2)}`
+        : `服务已完成，现金支付 ¥${actualAmount.toFixed(2)}`
+      )
+      setPayVisible(false)
       setStockCheckVisible(false)
       setPendingCompleteNo('')
+      setCompletingAppointment(null)
       fetchData()
     } catch (error) {
       console.error('Complete error:', error)
@@ -213,6 +297,18 @@ const Appointment = () => {
       render: (status: string) => <Tag color={statusColors[status] || 'default'}>{status}</Tag>,
     },
     {
+      title: '支付信息',
+      key: 'pay_info',
+      render: (_: any, record: Appointment) => (
+        record.status === '已完成' ? (
+          <Space>
+            <Tag color={record.pay_method === '余额' ? 'blue' : 'green'}>{record.pay_method}</Tag>
+            {record.pay_amount !== undefined && <span style={{ fontWeight: 600 }}>¥{record.pay_amount.toFixed(2)}</span>}
+          </Space>
+        ) : '-'
+      ),
+    },
+    {
       title: '操作',
       key: 'action',
       render: (_: any, record: Appointment) => (
@@ -223,7 +319,7 @@ const Appointment = () => {
                 icon={<CheckOutlined />}
                 size="small"
                 type="primary"
-                onClick={() => handleComplete(record.appointment_no)}
+                onClick={() => handleComplete(record)}
               >
                 完成
               </Button>
@@ -343,7 +439,7 @@ const Appointment = () => {
                   }}
                   options={services.map((s) => ({
                     value: s.service_id,
-                    label: s.name,
+                    label: `${s.name} (¥${s.price})`,
                   }))}
                 />
               </Form.Item>
@@ -416,8 +512,8 @@ const Appointment = () => {
         title="服务完成确认 - 耗材库存检查"
         open={stockCheckVisible}
         onCancel={() => setStockCheckVisible(false)}
-        onOk={confirmComplete}
-        okText="确认完成服务"
+        onOk={stockCheckResult?.sufficient ? goToPay : undefined}
+        okText="去支付"
         cancelText="取消"
         okButtonProps={{ disabled: !stockCheckResult?.sufficient }}
         width={520}
@@ -494,8 +590,105 @@ const Appointment = () => {
           </>
         )}
       </Modal>
+
+      <Modal
+        title="服务完成 - 选择支付方式"
+        open={payVisible}
+        onCancel={() => setPayVisible(false)}
+        onOk={confirmComplete}
+        okText="确认完成支付"
+        width={560}
+      >
+        {completingAppointment && currentService && (
+          <>
+            <Descriptions size="small" column={2} bordered style={{ marginBottom: 16 }}>
+              <Descriptions.Item label="预约编号">{completingAppointment.appointment_no}</Descriptions.Item>
+              <Descriptions.Item label="客户姓名">{completingAppointment.customer_name}</Descriptions.Item>
+              <Descriptions.Item label="联系电话">{completingAppointment.phone}</Descriptions.Item>
+              <Descriptions.Item label="服务项目">{currentService.name}</Descriptions.Item>
+              <Descriptions.Item label="服务原价" contentStyle={{ color: '#999' }}>¥{currentService.price.toFixed(2)}</Descriptions.Item>
+              <Descriptions.Item label="实付金额" contentStyle={{ color: '#f5222d', fontWeight: 600, fontSize: 18 }}>
+                ¥{actualAmount.toFixed(2)}
+                {payMethod === '余额' && selectedMember && selectedMember.discount_rate < 1 && (
+                  <Tag color="orange" style={{ marginLeft: 8 }}>
+                    {(selectedMember.discount_rate * 10).toFixed(1)}折优惠
+                  </Tag>
+                )}
+              </Descriptions.Item>
+            </Descriptions>
+
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontWeight: 600, marginBottom: 8 }}>支付方式：</div>
+              <Space>
+                <Button
+                  type={payMethod === '现金' ? 'primary' : 'default'}
+                  icon={<DollarOutlined />}
+                  onClick={() => setPayMethod('现金')}
+                >
+                  现金支付
+                </Button>
+                <Button
+                  type={payMethod === '余额' ? 'primary' : 'default'}
+                  icon={<WalletOutlined />}
+                  onClick={() => setPayMethod('余额')}
+                >
+                  会员余额支付
+                </Button>
+              </Space>
+            </div>
+
+            {payMethod === '余额' && (
+              <Card size="small" type="inner" title="会员信息">
+                <Row gutter={8} style={{ marginBottom: 12 }}>
+                  <Col span={16}>
+                    <Input
+                      placeholder="输入会员手机号搜索"
+                      value={memberSearchPhone}
+                      onChange={(e) => setMemberSearchPhone(e.target.value)}
+                      onPressEnter={searchMemberByPhone}
+                    />
+                  </Col>
+                  <Col span={8}>
+                    <Button type="primary" onClick={searchMemberByPhone} loading={memberSearching} block>
+                      搜索会员
+                    </Button>
+                  </Col>
+                </Row>
+                {selectedMember ? (
+                  <Alert
+                    type="success"
+                    showIcon
+                    message={
+                      <Space>
+                        <span>会员：<strong>{selectedMember.name}</strong></span>
+                        <Tag color="purple">{selectedMember.level_name}</Tag>
+                      </Space>
+                    }
+                    description={
+                      <Space>
+                        <span>余额：<strong style={{ color: '#52c41a' }}>¥{selectedMember.balance.toFixed(2)}</strong></span>
+                        <span>折扣：<Tag color="orange">{(selectedMember.discount_rate * 10).toFixed(1)}折</Tag></span>
+                        {selectedMember.balance < actualAmount && (
+                          <Tag color="red">余额不足，需 ¥{actualAmount.toFixed(2)}</Tag>
+                        )}
+                      </Space>
+                    }
+                  />
+                ) : (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    message="请先搜索并选择会员"
+                    description="余额支付需要验证会员身份和余额"
+                  />
+                )}
+              </Card>
+            )}
+          </>
+        )}
+      </Modal>
     </Card>
   )
 }
 
-export default Appointment
+export default AppointmentPage

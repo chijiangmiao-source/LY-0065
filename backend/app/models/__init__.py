@@ -6,6 +6,11 @@ from app.models.schedule import Schedule
 from app.models.consumable import Consumable
 from app.models.usage import Usage
 from app.models.service_consumable_template import ServiceConsumableTemplate
+from app.models.member_level import MemberLevel
+from app.models.member import Member
+from app.models.member_recharge import MemberRecharge
+from app.models.member_consumption import MemberConsumption
+from app.models.operation_log import OperationLog
 
 __all__ = [
     "User",
@@ -16,4 +21,9 @@ __all__ = [
     "Consumable",
     "Usage",
     "ServiceConsumableTemplate",
+    "MemberLevel",
+    "Member",
+    "MemberRecharge",
+    "MemberConsumption",
+    "OperationLog",
 ]

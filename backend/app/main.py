@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 
 from app.config import settings
 from app.database import init_db
-from app.routes import auth, employee, service, appointment, schedule, consumable, usage, dashboard, service_consumable_template
+from app.routes import auth, employee, service, appointment, schedule, consumable, usage, dashboard, service_consumable_template, member
 
 
 @asynccontextmanager
@@ -32,6 +32,7 @@ app.include_router(consumable.router, prefix="/api/consumables", tags=["耗材�
 app.include_router(usage.router, prefix="/api/usages", tags=["领用登记"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["统计看板"])
 app.include_router(service_consumable_template.router, prefix="/api/service-consumable-templates", tags=["服务耗材模板"])
+app.include_router(member.router, prefix="/api/members", tags=["会员管理"])
 
 
 @app.get("/")

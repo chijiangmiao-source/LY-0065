@@ -2,12 +2,17 @@ from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Depends, Query
 
-from app.models.appointment import Appointment, AppointmentCreate, AppointmentUpdate, AppointmentResponse
+from app.models.appointment import Appointment, AppointmentCreate, AppointmentUpdate, AppointmentResponse, AppointmentCompleteRequest
 from app.models.service_consumable_template import ServiceConsumableTemplate
 from app.models.consumable import Consumable
 from app.models.usage import Usage
+from app.models.service import Service
+from app.models.member import Member
+from app.models.member_level import MemberLevel
+from app.models.member_consumption import MemberConsumption
 from app.models.user import User
 from app.utils.auth import get_current_user
+from app.utils.log import add_operation_log
 
 router = APIRouter()
 
@@ -45,6 +50,10 @@ async def create_appointment(appointment: AppointmentCreate, current_user: User 
         appointment_date=db_appointment.appointment_date,
         time_slot=db_appointment.time_slot,
         status=db_appointment.status,
+        pay_method=db_appointment.pay_method,
+        member_no=db_appointment.member_no,
+        pay_amount=db_appointment.pay_amount,
+        discount_rate=db_appointment.discount_rate,
         created_at=db_appointment.created_at
     )
 
@@ -84,6 +93,10 @@ async def get_appointments(
             appointment_date=a.appointment_date,
             time_slot=a.time_slot,
             status=a.status,
+            pay_method=a.pay_method,
+            member_no=a.member_no,
+            pay_amount=a.pay_amount,
+            discount_rate=a.discount_rate,
             created_at=a.created_at
         ) for a in appointments
     ]
@@ -106,6 +119,10 @@ async def get_appointment(appointment_no: str, current_user: User = Depends(get_
         appointment_date=appointment.appointment_date,
         time_slot=appointment.time_slot,
         status=appointment.status,
+        pay_method=appointment.pay_method,
+        member_no=appointment.member_no,
+        pay_amount=appointment.pay_amount,
+        discount_rate=appointment.discount_rate,
         created_at=appointment.created_at
     )
 
@@ -143,6 +160,10 @@ async def update_appointment(appointment_no: str, appointment_update: Appointmen
         appointment_date=appointment.appointment_date,
         time_slot=appointment.time_slot,
         status=appointment.status,
+        pay_method=appointment.pay_method,
+        member_no=appointment.member_no,
+        pay_amount=appointment.pay_amount,
+        discount_rate=appointment.discount_rate,
         created_at=appointment.created_at
     )
 
@@ -225,8 +246,23 @@ async def check_appointment_stock(appointment_no: str, current_user: User = Depe
     }
 
 
+async def generate_consumption_no() -> str:
+    today = datetime.now().strftime("%Y%m%d")
+    prefix = f"C{today}"
+    last = await MemberConsumption.find(MemberConsumption.consumption_no.startswith(prefix)).sort("-consumption_no").first_or_none()
+    if last:
+        seq = int(last.consumption_no[-4:]) + 1
+    else:
+        seq = 1
+    return f"{prefix}{seq:04d}"
+
+
 @router.post("/{appointment_no}/complete")
-async def complete_appointment(appointment_no: str, current_user: User = Depends(get_current_user)):
+async def complete_appointment(
+    appointment_no: str,
+    request_data: AppointmentCompleteRequest,
+    current_user: User = Depends(get_current_user)
+):
     appointment = await Appointment.find_one(Appointment.appointment_no == appointment_no)
     if not appointment:
         raise HTTPException(status_code=404, detail="预约不存在")
@@ -234,6 +270,46 @@ async def complete_appointment(appointment_no: str, current_user: User = Depends
         raise HTTPException(status_code=400, detail="已取消的预约不能办理服务")
     if appointment.status == "已完成":
         raise HTTPException(status_code=400, detail="该预约已完成")
+
+    if request_data.pay_method not in ["余额", "现金"]:
+        raise HTTPException(status_code=400, detail="支付方式必须为'余额'或'现金'")
+
+    service = await Service.find_one(Service.service_id == appointment.service_id)
+    if not service:
+        raise HTTPException(status_code=400, detail="服务项目不存在")
+
+    original_price = service.price
+    discount_rate = 1.0
+    member = None
+    balance_before = None
+    balance_after = None
+
+    if request_data.pay_method == "余额":
+        if not request_data.member_no:
+            raise HTTPException(status_code=400, detail="余额支付必须选择会员")
+        member = await Member.find_one(Member.member_no == request_data.member_no)
+        if not member:
+            raise HTTPException(status_code=404, detail="会员不存在")
+        if member.phone != appointment.phone:
+            raise HTTPException(status_code=400, detail="会员手机号与预约手机号不一致")
+        if member.status != "正常":
+            raise HTTPException(status_code=400, detail="该会员状态异常，无法使用余额支付")
+        level = await MemberLevel.find_one(MemberLevel.level_id == member.level_id)
+        if level:
+            discount_rate = level.discount_rate
+        actual_amount = round(original_price * discount_rate, 2)
+        if member.balance < actual_amount:
+            raise HTTPException(
+                status_code=400,
+                detail=f"会员余额不足，当前余额：{member.balance} 元，需支付：{actual_amount} 元"
+            )
+        balance_before = member.balance
+        balance_after = round(member.balance - actual_amount, 2)
+        member.balance = balance_after
+        member.total_consumption += actual_amount
+        await member.save()
+    else:
+        actual_amount = original_price
 
     template = await ServiceConsumableTemplate.find_one(
         ServiceConsumableTemplate.service_id == appointment.service_id,
@@ -284,9 +360,55 @@ async def complete_appointment(appointment_no: str, current_user: User = Depends
             )
             await db_usage.insert()
 
+    consumption = MemberConsumption(
+        consumption_no=await generate_consumption_no(),
+        member_no=request_data.member_no,
+        member_name=member.name if member else None,
+        phone=member.phone if member else appointment.phone,
+        appointment_no=appointment.appointment_no,
+        service_id=appointment.service_id,
+        service_name=appointment.service_name,
+        original_price=original_price,
+        discount_rate=discount_rate,
+        actual_amount=actual_amount,
+        pay_method=request_data.pay_method,
+        balance_before=balance_before,
+        balance_after=balance_after,
+        operator=current_user.username,
+        remark=f"预约服务完成支付"
+    )
+    await consumption.insert()
+
     appointment.status = "已完成"
+    appointment.pay_method = request_data.pay_method
+    appointment.member_no = request_data.member_no
+    appointment.pay_amount = actual_amount
+    appointment.discount_rate = discount_rate
     await appointment.save()
-    return {"message": "服务已完成，耗材已自动扣减"}
+
+    pay_detail = f"{request_data.pay_method}支付 {actual_amount} 元"
+    if discount_rate < 1.0:
+        pay_detail += f"（原价 {original_price} 元，折扣 {(discount_rate * 10):.1f} 折）"
+
+    await add_operation_log(
+        operator=current_user.username,
+        module="预约服务",
+        action="完成服务",
+        target_id=appointment.appointment_no,
+        detail=f"完成预约服务 {appointment.customer_name} - {appointment.service_name}，{pay_detail}"
+    )
+
+    return {
+        "message": f"服务已完成，耗材已自动扣减，{pay_detail}",
+        "pay_info": {
+            "pay_method": request_data.pay_method,
+            "original_price": original_price,
+            "discount_rate": discount_rate,
+            "actual_amount": actual_amount,
+            "balance_before": balance_before,
+            "balance_after": balance_after,
+        }
+    }
 
 
 @router.post("/{appointment_no}/cancel")
@@ -309,6 +431,28 @@ async def cancel_appointment(appointment_no: str, current_user: User = Depends(g
                 await consumable.save()
             await usage.delete()
 
+        if appointment.pay_method == "余额" and appointment.member_no and appointment.pay_amount:
+            member = await Member.find_one(Member.member_no == appointment.member_no)
+            if member:
+                member.balance = round(member.balance + appointment.pay_amount, 2)
+                member.total_consumption = max(0, member.total_consumption - appointment.pay_amount)
+                await member.save()
+
+            consumption = await MemberConsumption.find_one(
+                MemberConsumption.appointment_no == appointment_no
+            )
+            if consumption:
+                await consumption.delete()
+
     appointment.status = "已取消"
     await appointment.save()
+
+    await add_operation_log(
+        operator=current_user.username,
+        module="预约服务",
+        action="取消预约",
+        target_id=appointment.appointment_no,
+        detail=f"取消预约 {appointment.customer_name} - {appointment.service_name}"
+    )
+
     return {"message": "预约已取消，库存已退还"}

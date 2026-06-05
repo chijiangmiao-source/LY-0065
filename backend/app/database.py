@@ -1,7 +1,7 @@
 from beanie import init_beanie
 from motor.motor_asyncio import AsyncIOMotorClient
 
-from app.models import User, Employee, Service, Appointment, Schedule, Consumable, Usage, ServiceConsumableTemplate
+from app.models import User, Employee, Service, Appointment, Schedule, Consumable, Usage, ServiceConsumableTemplate, MemberLevel, Member, MemberRecharge, MemberConsumption, OperationLog
 from app.utils.auth import init_default_user
 
 
@@ -9,7 +9,7 @@ async def init_db(mongodb_url: str, db_name: str):
     client = AsyncIOMotorClient(mongodb_url)
     await init_beanie(
         database=client[db_name],
-        document_models=[User, Employee, Service, Appointment, Schedule, Consumable, Usage, ServiceConsumableTemplate],
+        document_models=[User, Employee, Service, Appointment, Schedule, Consumable, Usage, ServiceConsumableTemplate, MemberLevel, Member, MemberRecharge, MemberConsumption, OperationLog],
     )
     await User.ensure_indexes()
     await Employee.ensure_indexes()
@@ -19,4 +19,9 @@ async def init_db(mongodb_url: str, db_name: str):
     await Consumable.ensure_indexes()
     await Usage.ensure_indexes()
     await ServiceConsumableTemplate.ensure_indexes()
+    await MemberLevel.ensure_indexes()
+    await Member.ensure_indexes()
+    await MemberRecharge.ensure_indexes()
+    await MemberConsumption.ensure_indexes()
+    await OperationLog.ensure_indexes()
     await init_default_user()
