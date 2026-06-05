@@ -11,6 +11,7 @@ import Consumable from './pages/Consumable'
 import Usage from './pages/Usage'
 import ServiceConsumableTemplate from './pages/ServiceConsumableTemplate'
 import Member from './pages/Member'
+import PackageCard from './pages/PackageCard'
 
 const PrivateRoute = ({ children }: { children: React.ReactNode }) => {
   return isAuthenticated() ? <>{children}</> : <Navigate to="/login" />
@@ -31,6 +32,7 @@ function App() {
         <Route index element={<Navigate to="/dashboard" />} />
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="member" element={<Member />} />
+        <Route path="package-card" element={<PackageCard />} />
         <Route path="employee" element={<Employee />} />
         <Route path="service" element={<Service />} />
         <Route path="service-consumable-template" element={<ServiceConsumableTemplate />} />

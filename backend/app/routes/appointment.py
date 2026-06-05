@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Depends, Query
 
@@ -10,11 +10,24 @@ from app.models.service import Service
 from app.models.member import Member
 from app.models.member_level import MemberLevel
 from app.models.member_consumption import MemberConsumption
+from app.models.member_package import MemberPackage
+from app.models.package_redemption import PackageRedemption
 from app.models.user import User
 from app.utils.auth import get_current_user
 from app.utils.log import add_operation_log
 
 router = APIRouter()
+
+
+async def generate_redemption_no() -> str:
+    today = datetime.now().strftime("%Y%m%d")
+    prefix = f"R{today}"
+    last = await PackageRedemption.find(PackageRedemption.redemption_no.startswith(prefix)).sort("-redemption_no").first_or_none()
+    if last:
+        seq = int(last.redemption_no[-4:]) + 1
+    else:
+        seq = 1
+    return f"{prefix}{seq:04d}"
 
 
 def is_appointment_time_valid(appointment_date: str, time_slot: str) -> bool:
@@ -271,8 +284,8 @@ async def complete_appointment(
     if appointment.status == "已完成":
         raise HTTPException(status_code=400, detail="该预约已完成")
 
-    if request_data.pay_method not in ["余额", "现金"]:
-        raise HTTPException(status_code=400, detail="支付方式必须为'余额'或'现金'")
+    if request_data.pay_method not in ["余额", "现金", "次卡"]:
+        raise HTTPException(status_code=400, detail="支付方式必须为'余额'、'现金'或'次卡'")
 
     service = await Service.find_one(Service.service_id == appointment.service_id)
     if not service:
@@ -283,8 +296,117 @@ async def complete_appointment(
     member = None
     balance_before = None
     balance_after = None
+    member_package = None
+    redemption_info = None
+    mixed_pay_amount = None
 
-    if request_data.pay_method == "余额":
+    if request_data.pay_method == "次卡":
+        if not request_data.member_no:
+            raise HTTPException(status_code=400, detail="次卡核销必须选择会员")
+        if not request_data.member_package_no:
+            raise HTTPException(status_code=400, detail="次卡核销必须选择会员套餐")
+
+        member = await Member.find_one(Member.member_no == request_data.member_no)
+        if not member:
+            raise HTTPException(status_code=404, detail="会员不存在")
+        if member.phone != appointment.phone:
+            raise HTTPException(status_code=400, detail="会员手机号与预约手机号不一致")
+        if member.status != "正常":
+            raise HTTPException(status_code=400, detail="该会员状态异常，无法使用次卡")
+
+        member_package = await MemberPackage.find_one(
+            MemberPackage.member_package_no == request_data.member_package_no
+        )
+        if not member_package:
+            raise HTTPException(status_code=404, detail="会员套餐不存在")
+        if member_package.member_no != request_data.member_no:
+            raise HTTPException(status_code=400, detail="该套餐不属于所选会员")
+        if member_package.status != "生效中":
+            raise HTTPException(status_code=400, detail=f"套餐状态异常：{member_package.status}，无法核销")
+        if member_package.expire_date < datetime.now():
+            raise HTTPException(status_code=400, detail=f"套餐已于 {member_package.expire_date.strftime('%Y-%m-%d')} 过期，无法核销")
+        if member_package.remaining_times < 1:
+            raise HTTPException(status_code=400, detail="套餐剩余次数不足，无法核销")
+
+        if member_package.applicable_service_ids:
+            if appointment.service_id not in member_package.applicable_service_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"该套餐仅适用于：{', '.join(member_package.applicable_service_names)}，当前服务不匹配"
+                )
+
+        if member_package.applicable_employee_ids and appointment.employee_id:
+            if appointment.employee_id not in member_package.applicable_employee_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail="该套餐不支持当前服务员工"
+                )
+
+        remaining_before = member_package.remaining_times
+        member_package.used_times += 1
+        member_package.remaining_times -= 1
+        remaining_after = member_package.remaining_times
+
+        if request_data.use_mixed_payment and not member_package.allow_mixed_payment:
+            raise HTTPException(status_code=400, detail="该套餐不支持与余额混合支付")
+
+        actual_amount = 0.0
+        mixed_payment = False
+
+        if request_data.use_mixed_payment:
+            level = await MemberLevel.find_one(MemberLevel.level_id == member.level_id)
+            if level:
+                discount_rate = level.discount_rate
+            mixed_pay_amount = round(original_price * discount_rate, 2)
+            if member.balance < mixed_pay_amount:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"混合支付余额不足，当前余额：{member.balance} 元，需支付：{mixed_pay_amount} 元"
+                )
+            balance_before = member.balance
+            balance_after = round(member.balance - mixed_pay_amount, 2)
+            member.balance = balance_after
+            member.total_consumption += mixed_pay_amount
+            actual_amount = mixed_pay_amount
+            mixed_payment = True
+
+        await member_package.save()
+
+        redemption = PackageRedemption(
+            redemption_no=await generate_redemption_no(),
+            member_package_no=member_package.member_package_no,
+            member_no=member.member_no,
+            member_name=member.name,
+            phone=member.phone,
+            package_no=member_package.package_no,
+            package_name=member_package.package_name,
+            appointment_no=appointment.appointment_no,
+            service_id=appointment.service_id,
+            service_name=appointment.service_name,
+            employee_id=appointment.employee_id,
+            employee_name=appointment.employee_name,
+            redeem_times=1,
+            remaining_before=remaining_before,
+            remaining_after=remaining_after,
+            mixed_payment=mixed_payment,
+            mixed_pay_amount=mixed_pay_amount,
+            operator=current_user.username,
+            remark=f"预约服务完成次卡核销"
+        )
+        await redemption.insert()
+
+        redemption_info = {
+            "member_package_no": member_package.member_package_no,
+            "package_name": member_package.package_name,
+            "remaining_before": remaining_before,
+            "remaining_after": remaining_after,
+            "mixed_payment": mixed_payment,
+            "mixed_pay_amount": mixed_pay_amount
+        }
+
+        await member.save()
+
+    elif request_data.pay_method == "余额":
         if not request_data.member_no:
             raise HTTPException(status_code=400, detail="余额支付必须选择会员")
         member = await Member.find_one(Member.member_no == request_data.member_no)
@@ -375,7 +497,7 @@ async def complete_appointment(
         balance_before=balance_before,
         balance_after=balance_after,
         operator=current_user.username,
-        remark=f"预约服务完成支付"
+        remark=f"预约服务完成支付{'（次卡核销）' if request_data.pay_method == '次卡' else ''}"
     )
     await consumption.insert()
 
@@ -386,9 +508,14 @@ async def complete_appointment(
     appointment.discount_rate = discount_rate
     await appointment.save()
 
-    pay_detail = f"{request_data.pay_method}支付 {actual_amount} 元"
-    if discount_rate < 1.0:
-        pay_detail += f"（原价 {original_price} 元，折扣 {(discount_rate * 10):.1f} 折）"
+    if request_data.pay_method == "次卡":
+        pay_detail = f"次卡核销（{member_package.package_name}），剩余次数：{remaining_after}次"
+        if mixed_payment and mixed_pay_amount:
+            pay_detail += f"，混合余额支付 {mixed_pay_amount} 元"
+    else:
+        pay_detail = f"{request_data.pay_method}支付 {actual_amount} 元"
+        if discount_rate < 1.0:
+            pay_detail += f"（原价 {original_price} 元，折扣 {(discount_rate * 10):.1f} 折）"
 
     await add_operation_log(
         operator=current_user.username,
@@ -407,6 +534,7 @@ async def complete_appointment(
             "actual_amount": actual_amount,
             "balance_before": balance_before,
             "balance_after": balance_after,
+            "redemption": redemption_info
         }
     }
 
@@ -431,6 +559,28 @@ async def cancel_appointment(appointment_no: str, current_user: User = Depends(g
                 await consumable.save()
             await usage.delete()
 
+        if appointment.pay_method == "次卡":
+            redemption = await PackageRedemption.find_one(
+                PackageRedemption.appointment_no == appointment_no
+            )
+            if redemption:
+                member_package = await MemberPackage.find_one(
+                    MemberPackage.member_package_no == redemption.member_package_no
+                )
+                if member_package and member_package.status == "生效中":
+                    member_package.used_times = max(0, member_package.used_times - redemption.redeem_times)
+                    member_package.remaining_times += redemption.redeem_times
+                    await member_package.save()
+
+                    if redemption.mixed_payment and redemption.mixed_pay_amount and appointment.member_no:
+                        member = await Member.find_one(Member.member_no == appointment.member_no)
+                        if member:
+                            member.balance = round(member.balance + redemption.mixed_pay_amount, 2)
+                            member.total_consumption = max(0, member.total_consumption - redemption.mixed_pay_amount)
+                            await member.save()
+
+                await redemption.delete()
+
         if appointment.pay_method == "余额" and appointment.member_no and appointment.pay_amount:
             member = await Member.find_one(Member.member_no == appointment.member_no)
             if member:
@@ -438,6 +588,13 @@ async def cancel_appointment(appointment_no: str, current_user: User = Depends(g
                 member.total_consumption = max(0, member.total_consumption - appointment.pay_amount)
                 await member.save()
 
+            consumption = await MemberConsumption.find_one(
+                MemberConsumption.appointment_no == appointment_no
+            )
+            if consumption:
+                await consumption.delete()
+
+        if appointment.pay_method == "次卡" and appointment.member_no:
             consumption = await MemberConsumption.find_one(
                 MemberConsumption.appointment_no == appointment_no
             )

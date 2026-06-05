@@ -12,6 +12,7 @@ import {
   UserOutlined,
   AppstoreOutlined,
   CrownOutlined,
+  CreditCardOutlined,
 } from '@ant-design/icons'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { removeToken, getUsername } from '../utils/auth'
@@ -21,6 +22,7 @@ const { Header, Sider, Content } = AntLayout
 const menuItems = [
   { key: '/dashboard', icon: <DashboardOutlined />, label: '统计看板' },
   { key: '/member', icon: <CrownOutlined />, label: '会员管理' },
+  { key: '/package-card', icon: <CreditCardOutlined />, label: '套餐次卡' },
   { key: '/employee', icon: <TeamOutlined />, label: '员工管理' },
   { key: '/service', icon: <ScissorOutlined />, label: '服务项目' },
   { key: '/service-consumable-template', icon: <AppstoreOutlined />, label: '服务耗材模板' },

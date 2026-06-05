@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Table, Button, Modal, Form, Input, Select, message, Space, Card, DatePicker, Tag, Row, Col, List, Alert, Descriptions, Statistic } from 'antd'
-import { PlusOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, ExclamationCircleOutlined, WalletOutlined, DollarOutlined } from '@ant-design/icons'
+import { Table, Button, Modal, Form, Input, Select, message, Space, Card, DatePicker, Tag, Row, Col, List, Alert, Descriptions, Statistic, Checkbox } from 'antd'
+import { PlusOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, ExclamationCircleOutlined, WalletOutlined, DollarOutlined, CreditCardOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import request from '../utils/request'
 
@@ -61,6 +61,24 @@ interface StockCheckResult {
   insufficient_items: Array<{ consumable_no: string; consumable_name: string; required: number; stock: number; unit: string; reason: string }>
 }
 
+interface AvailablePackage {
+  id: string
+  member_package_no: string
+  member_no: string
+  member_name: string
+  package_no: string
+  package_name: string
+  package_type: string
+  total_times: number
+  used_times: number
+  remaining_times: number
+  expire_date: string
+  applicable_service_ids: string[]
+  applicable_service_names: string[]
+  allow_mixed_payment: boolean
+  status: string
+}
+
 const timeSlots = [
   '09:00-10:00',
   '10:00-11:00',
@@ -97,20 +115,55 @@ const AppointmentPage = () => {
   const [pendingCompleteNo, setPendingCompleteNo] = useState<string>('')
 
   const [payVisible, setPayVisible] = useState(false)
-  const [payMethod, setPayMethod] = useState<'余额' | '现金'>('现金')
+  const [payMethod, setPayMethod] = useState<'余额' | '现金' | '次卡'>('现金')
   const [selectedMember, setSelectedMember] = useState<MemberOption | null>(null)
   const [memberSearchPhone, setMemberSearchPhone] = useState('')
   const [memberSearching, setMemberSearching] = useState(false)
   const [currentService, setCurrentService] = useState<ServiceOption | null>(null)
   const [completingAppointment, setCompletingAppointment] = useState<Appointment | null>(null)
+  const [availablePackages, setAvailablePackages] = useState<AvailablePackage[]>([])
+  const [selectedPackage, setSelectedPackage] = useState<AvailablePackage | null>(null)
+  const [useMixedPayment, setUseMixedPayment] = useState(false)
+  const [loadingPackages, setLoadingPackages] = useState(false)
 
   const actualAmount = (() => {
     if (!currentService) return 0
+    if (payMethod === '次卡') {
+      if (useMixedPayment && selectedMember) {
+        return Math.round(currentService.price * selectedMember.discount_rate * 100) / 100
+      }
+      return 0
+    }
     if (payMethod === '余额' && selectedMember) {
       return Math.round(currentService.price * selectedMember.discount_rate * 100) / 100
     }
     return currentService.price
   })()
+
+  const fetchAvailablePackages = async (memberNo: string) => {
+    if (!completingAppointment) return
+    setLoadingPackages(true)
+    try {
+      const params = new URLSearchParams()
+      if (completingAppointment.service_id) params.append('service_id', completingAppointment.service_id)
+      if (completingAppointment.employee_id) params.append('employee_id', completingAppointment.employee_id)
+      const res = await request.get(`/package-cards/member/${memberNo}/available?${params.toString()}`) as AvailablePackage[]
+      setAvailablePackages(res)
+      if (res.length > 0) {
+        setSelectedPackage(res[0])
+        setUseMixedPayment(false)
+      } else {
+        setSelectedPackage(null)
+        message.warning('该会员暂无可用的次卡套餐')
+      }
+    } catch (error) {
+      console.error('Fetch available packages error:', error)
+      setAvailablePackages([])
+      setSelectedPackage(null)
+    } finally {
+      setLoadingPackages(false)
+    }
+  }
 
   const fetchData = async () => {
     setLoading(true)
@@ -181,6 +234,9 @@ const AppointmentPage = () => {
     setPayMethod('现金')
     setSelectedMember(null)
     setMemberSearchPhone(record.phone)
+    setAvailablePackages([])
+    setSelectedPackage(null)
+    setUseMixedPayment(false)
     try {
       const res = await request.get(`/appointments/${record.appointment_no}/stock-check`) as StockCheckResult
       setStockCheckResult(res)
@@ -205,13 +261,19 @@ const AppointmentPage = () => {
     try {
       const member = await request.get(`/members/phone/${memberSearchPhone}`) as MemberOption
       const level = await request.get(`/members/levels/${(member as any).level_id}`) as any
-      setSelectedMember({
+      const memberData = {
         ...member,
         discount_rate: level?.discount_rate ?? 1.0,
-      })
+      }
+      setSelectedMember(memberData)
       message.success(`找到会员：${member.name}`)
+      if (payMethod === '次卡') {
+        await fetchAvailablePackages(member.member_no)
+      }
     } catch (error) {
       setSelectedMember(null)
+      setAvailablePackages([])
+      setSelectedPackage(null)
       message.error('未找到该手机号对应的会员')
     } finally {
       setMemberSearching(false)
@@ -222,7 +284,27 @@ const AppointmentPage = () => {
     if (!pendingCompleteNo) return
     try {
       const payload: any = { pay_method: payMethod }
-      if (payMethod === '余额') {
+      if (payMethod === '次卡') {
+        if (!selectedMember) {
+          message.error('次卡核销请先选择会员')
+          return
+        }
+        if (!selectedPackage) {
+          message.error('请选择要核销的次卡套餐')
+          return
+        }
+        if (selectedMember.phone !== completingAppointment?.phone) {
+          message.error('会员手机号与预约手机号不一致')
+          return
+        }
+        if (useMixedPayment && selectedMember.balance < actualAmount) {
+          message.error(`混合支付余额不足，当前余额 ¥${selectedMember.balance.toFixed(2)}，需支付 ¥${actualAmount.toFixed(2)}`)
+          return
+        }
+        payload.member_no = selectedMember.member_no
+        payload.member_package_no = selectedPackage.member_package_no
+        payload.use_mixed_payment = useMixedPayment
+      } else if (payMethod === '余额') {
         if (!selectedMember) {
           message.error('余额支付请先选择会员')
           return
@@ -237,18 +319,34 @@ const AppointmentPage = () => {
         }
         payload.member_no = selectedMember.member_no
       }
-      await request.post(`/appointments/${pendingCompleteNo}/complete`, payload)
-      message.success(payMethod === '余额'
-        ? `服务已完成，已从会员余额扣除 ¥${actualAmount.toFixed(2)}`
-        : `服务已完成，现金支付 ¥${actualAmount.toFixed(2)}`
-      )
+      const res: any = await request.post(`/appointments/${pendingCompleteNo}/complete`, payload)
+      let successMsg = ''
+      if (payMethod === '次卡' && selectedPackage) {
+        successMsg = `服务已完成，次卡核销成功（${selectedPackage.package_name}），剩余 ${selectedPackage.remaining_times - 1} 次`
+        if (useMixedPayment) {
+          successMsg += `，混合余额支付 ¥${actualAmount.toFixed(2)}`
+        }
+      } else if (payMethod === '余额') {
+        successMsg = `服务已完成，已从会员余额扣除 ¥${actualAmount.toFixed(2)}`
+      } else {
+        successMsg = `服务已完成，现金支付 ¥${actualAmount.toFixed(2)}`
+      }
+      message.success(successMsg)
       setPayVisible(false)
       setStockCheckVisible(false)
       setPendingCompleteNo('')
       setCompletingAppointment(null)
       fetchData()
-    } catch (error) {
+    } catch (error: any) {
       console.error('Complete error:', error)
+      if (error?.response?.data?.detail) {
+        const detail = error.response.data.detail
+        if (typeof detail === 'string') {
+          message.error(detail)
+        } else if (detail?.message) {
+          message.error(detail.message)
+        }
+      }
     }
   }
 
@@ -302,8 +400,9 @@ const AppointmentPage = () => {
       render: (_: any, record: Appointment) => (
         record.status === '已完成' ? (
           <Space>
-            <Tag color={record.pay_method === '余额' ? 'blue' : 'green'}>{record.pay_method}</Tag>
-            {record.pay_amount !== undefined && <span style={{ fontWeight: 600 }}>¥{record.pay_amount.toFixed(2)}</span>}
+            <Tag color={record.pay_method === '余额' ? 'blue' : record.pay_method === '次卡' ? 'purple' : 'green'}>{record.pay_method}</Tag>
+            {record.pay_amount !== undefined && record.pay_amount > 0 && <span style={{ fontWeight: 600 }}>¥{record.pay_amount.toFixed(2)}</span>}
+            {record.pay_method === '次卡' && record.pay_amount === 0 && <span style={{ color: '#999' }}>纯次卡核销</span>}
           </Space>
         ) : '-'
       ),
@@ -619,25 +718,46 @@ const AppointmentPage = () => {
 
             <div style={{ marginBottom: 16 }}>
               <div style={{ fontWeight: 600, marginBottom: 8 }}>支付方式：</div>
-              <Space>
+              <Space wrap>
                 <Button
                   type={payMethod === '现金' ? 'primary' : 'default'}
                   icon={<DollarOutlined />}
-                  onClick={() => setPayMethod('现金')}
+                  onClick={() => {
+                    setPayMethod('现金')
+                    setAvailablePackages([])
+                    setSelectedPackage(null)
+                  }}
                 >
                   现金支付
                 </Button>
                 <Button
                   type={payMethod === '余额' ? 'primary' : 'default'}
                   icon={<WalletOutlined />}
-                  onClick={() => setPayMethod('余额')}
+                  onClick={() => {
+                    setPayMethod('余额')
+                    setAvailablePackages([])
+                    setSelectedPackage(null)
+                  }}
                 >
                   会员余额支付
+                </Button>
+                <Button
+                  type={payMethod === '次卡' ? 'primary' : 'default'}
+                  icon={<CreditCardOutlined />}
+                  onClick={() => {
+                    setPayMethod('次卡')
+                    setUseMixedPayment(false)
+                    if (selectedMember) {
+                      fetchAvailablePackages(selectedMember.member_no)
+                    }
+                  }}
+                >
+                  次卡核销
                 </Button>
               </Space>
             </div>
 
-            {payMethod === '余额' && (
+            {(payMethod === '余额' || payMethod === '次卡') && (
               <Card size="small" type="inner" title="会员信息">
                 <Row gutter={8} style={{ marginBottom: 12 }}>
                   <Col span={16}>
@@ -665,10 +785,10 @@ const AppointmentPage = () => {
                       </Space>
                     }
                     description={
-                      <Space>
+                      <Space wrap>
                         <span>余额：<strong style={{ color: '#52c41a' }}>¥{selectedMember.balance.toFixed(2)}</strong></span>
                         <span>折扣：<Tag color="orange">{(selectedMember.discount_rate * 10).toFixed(1)}折</Tag></span>
-                        {selectedMember.balance < actualAmount && (
+                        {(payMethod === '余额' || (payMethod === '次卡' && useMixedPayment)) && selectedMember.balance < actualAmount && (
                           <Tag color="red">余额不足，需 ¥{actualAmount.toFixed(2)}</Tag>
                         )}
                       </Space>
@@ -679,8 +799,83 @@ const AppointmentPage = () => {
                     type="warning"
                     showIcon
                     message="请先搜索并选择会员"
-                    description="余额支付需要验证会员身份和余额"
+                    description={payMethod === '次卡' ? '次卡核销需要验证会员身份和可用套餐' : '余额支付需要验证会员身份和余额'}
                   />
+                )}
+              </Card>
+            )}
+
+            {payMethod === '次卡' && (
+              <Card size="small" type="inner" title="选择次卡套餐" style={{ marginTop: 12 }}>
+                {!selectedMember ? (
+                  <Alert type="warning" showIcon message="请先搜索并选择会员" description="选择会员后将自动查询可用的次卡套餐" />
+                ) : loadingPackages ? (
+                  <div style={{ textAlign: 'center', padding: '16px 0' }}>正在查询可用套餐...</div>
+                ) : availablePackages.length === 0 ? (
+                  <Alert type="error" showIcon message="该会员暂无可用的次卡套餐" description="请更换支付方式或为会员开通套餐" />
+                ) : (
+                  <>
+                    <List
+                      size="small"
+                      bordered
+                      dataSource={availablePackages}
+                      renderItem={(item) => (
+                        <List.Item
+                          onClick={() => setSelectedPackage(item)}
+                          style={{
+                            cursor: 'pointer',
+                            backgroundColor: selectedPackage?.member_package_no === item.member_package_no ? '#e6f7ff' : undefined,
+                            border: selectedPackage?.member_package_no === item.member_package_no ? '1px solid #1890ff' : undefined,
+                          }}
+                        >
+                          <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                            <Space direction="vertical" size={0}>
+                              <span style={{ fontWeight: 600 }}>{item.package_name}</span>
+                              <Space size={8}>
+                                <Tag color="blue">剩余 {item.remaining_times} 次</Tag>
+                                <Tag color="orange">有效期至 {dayjs(item.expire_date).format('YYYY-MM-DD')}</Tag>
+                                {item.allow_mixed_payment && <Tag color="green">支持混合支付</Tag>}
+                              </Space>
+                              {item.applicable_service_names.length > 0 && (
+                                <span style={{ fontSize: 12, color: '#666' }}>
+                                  适用服务：{item.applicable_service_names.join('、')}
+                                </span>
+                              )}
+                            </Space>
+                            {selectedPackage?.member_package_no === item.member_package_no && (
+                              <Tag color="blue">已选择</Tag>
+                            )}
+                          </Space>
+                        </List.Item>
+                      )}
+                    />
+                    {selectedPackage && selectedPackage.allow_mixed_payment && (
+                      <div style={{ marginTop: 12 }}>
+                        <Checkbox
+                          checked={useMixedPayment}
+                          onChange={(e) => setUseMixedPayment(e.target.checked)}
+                        >
+                          混合支付（次卡核销 + 余额支付享受会员折扣）
+                        </Checkbox>
+                        {useMixedPayment && (
+                          <Alert
+                            type="info"
+                            showIcon
+                            style={{ marginTop: 8 }}
+                            message={`混合支付需从余额扣除 ¥${actualAmount.toFixed(2)}（原价 ¥${currentService?.price.toFixed(2)}，${(selectedMember?.discount_rate ?? 1) * 10}折）`}
+                          />
+                        )}
+                      </div>
+                    )}
+                    {selectedPackage && !selectedPackage.allow_mixed_payment && (
+                      <Alert
+                        type="info"
+                        showIcon
+                        style={{ marginTop: 8 }}
+                        message="该套餐不支持混合支付，将纯次卡核销"
+                      />
+                    )}
+                  </>
                 )}
               </Card>
             )}

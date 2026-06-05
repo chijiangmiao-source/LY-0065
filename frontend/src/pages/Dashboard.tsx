@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
-import { Row, Col, Card, Statistic, Table, Tag } from 'antd'
+import { Row, Col, Card, Statistic, Table, Tag, Space } from 'antd'
 import {
   CalendarOutlined, TeamOutlined, InboxOutlined, CheckCircleOutlined, WarningOutlined,
-  LineChartOutlined, CrownOutlined, WalletOutlined, RiseOutlined
+  LineChartOutlined, CrownOutlined, WalletOutlined, RiseOutlined, CreditCardOutlined,
+  ExclamationCircleOutlined, ThunderboltOutlined
 } from '@ant-design/icons'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, PieChart, Pie, Cell,
@@ -104,6 +105,49 @@ interface ConsumptionRanking {
   ranking: Array<{ name: string; total_amount: number; count: number; rank: number }>
 }
 
+interface PackageSalesData {
+  total_count: number
+  total_sales: number
+  by_package: Array<{ name: string; count: number; amount: number }>
+}
+
+interface PackageLowRemainingItem {
+  id: string
+  member_package_no: string
+  member_no: string
+  member_name: string
+  phone: string
+  package_no: string
+  package_name: string
+  remaining_times: number
+  total_times: number
+  expire_date: string
+  days_left?: number
+}
+
+interface PackageLowRemainingWarning {
+  low_remaining_total: number
+  low_remaining_items: PackageLowRemainingItem[]
+  expiring_soon_total: number
+  expiring_soon_items: PackageLowRemainingItem[]
+}
+
+interface PackageRedemptionTrendItem {
+  date: string
+  label: string
+  redemption_count: number
+  mixed_pay_amount: number
+  by_package: Record<string, number>
+}
+
+interface PackageRedemption7DayTrend {
+  trend: PackageRedemptionTrendItem[]
+  summary: {
+    total_redemptions: number
+    total_mixed_pay_amount: number
+  }
+}
+
 const Dashboard = () => {
   const [summary, setSummary] = useState<DashboardSummary | null>(null)
   const [appointmentStats, setAppointmentStats] = useState<AppointmentStats | null>(null)
@@ -113,6 +157,9 @@ const Dashboard = () => {
   const [usageTrend, setUsageTrend] = useState<Usage7DayTrend | null>(null)
   const [rechargeTrend, setRechargeTrend] = useState<Recharge7DayTrend | null>(null)
   const [consumptionRanking, setConsumptionRanking] = useState<ConsumptionRanking | null>(null)
+  const [packageSales, setPackageSales] = useState<PackageSalesData | null>(null)
+  const [packageLowWarning, setPackageLowWarning] = useState<PackageLowRemainingWarning | null>(null)
+  const [packageRedemptionTrend, setPackageRedemptionTrend] = useState<PackageRedemption7DayTrend | null>(null)
 
   const fetchSummary = async () => {
     try {
@@ -159,6 +206,33 @@ const Dashboard = () => {
     }
   }
 
+  const fetchPackageSales = async () => {
+    try {
+      const res = await request.get('/dashboard/packages/sales') as PackageSalesData
+      setPackageSales(res)
+    } catch (error) {
+      console.error('Fetch package sales error:', error)
+    }
+  }
+
+  const fetchPackageLowWarning = async () => {
+    try {
+      const res = await request.get('/dashboard/packages/low-remaining-warning') as PackageLowRemainingWarning
+      setPackageLowWarning(res)
+    } catch (error) {
+      console.error('Fetch package low warning error:', error)
+    }
+  }
+
+  const fetchPackageRedemptionTrend = async () => {
+    try {
+      const res = await request.get('/dashboard/packages/redemption-7-day-trend') as PackageRedemption7DayTrend
+      setPackageRedemptionTrend(res)
+    } catch (error) {
+      console.error('Fetch package redemption trend error:', error)
+    }
+  }
+
   const fetchStats = async () => {
     try {
       const [appointmentRes, scheduleRes, consumableRes] = await Promise.all([
@@ -181,6 +255,9 @@ const Dashboard = () => {
     fetchUsageTrend()
     fetchRechargeTrend()
     fetchConsumptionRanking()
+    fetchPackageSales()
+    fetchPackageLowWarning()
+    fetchPackageRedemptionTrend()
   }, [])
 
   const appointmentChartData = appointmentStats
@@ -242,6 +319,57 @@ const Dashboard = () => {
     },
   ]
 
+  const packageLowRemainingColumns = [
+    { title: '会员姓名', dataIndex: 'member_name', key: 'member_name' },
+    { title: '联系电话', dataIndex: 'phone', key: 'phone' },
+    { title: '套餐名称', dataIndex: 'package_name', key: 'package_name' },
+    {
+      title: '剩余次数',
+      dataIndex: 'remaining_times',
+      key: 'remaining_times',
+      render: (val: number, record: PackageLowRemainingItem) => (
+        <Space>
+          <Tag color="red">{val}次</Tag>
+          <span style={{ color: '#999' }}>/共{record.total_times}次</span>
+        </Space>
+      ),
+    },
+    {
+      title: '有效期至',
+      dataIndex: 'expire_date',
+      key: 'expire_date',
+      render: (val: string) => new Date(val).toLocaleDateString('zh-CN'),
+    },
+  ]
+
+  const packageExpiringColumns = [
+    { title: '会员姓名', dataIndex: 'member_name', key: 'member_name' },
+    { title: '联系电话', dataIndex: 'phone', key: 'phone' },
+    { title: '套餐名称', dataIndex: 'package_name', key: 'package_name' },
+    {
+      title: '剩余次数',
+      dataIndex: 'remaining_times',
+      key: 'remaining_times',
+      render: (val: number) => <Tag color="blue">{val}次</Tag>,
+    },
+    {
+      title: '剩余天数',
+      dataIndex: 'days_left',
+      key: 'days_left',
+      render: (val: number) => <Tag color={val <= 3 ? 'red' : 'orange'}>仅剩{val}天</Tag>,
+    },
+    {
+      title: '有效期至',
+      dataIndex: 'expire_date',
+      key: 'expire_date',
+      render: (val: string) => new Date(val).toLocaleDateString('zh-CN'),
+    },
+  ]
+
+  const packageSalesChartData = packageSales
+    ? packageSales.by_package.map(p => ({ name: p.name, 销售数量: p.count, 销售金额: p.amount }))
+    : []
+
   return (
     <div>
       <Row gutter={16} style={{ marginBottom: 24 }}>
@@ -284,6 +412,53 @@ const Dashboard = () => {
               prefix={<WalletOutlined />}
               suffix="元"
               valueStyle={{ color: '#52c41a' }}
+            />
+          </Card>
+        </Col>
+      </Row>
+
+      <Row gutter={16} style={{ marginBottom: 24 }}>
+        <Col span={6}>
+          <Card>
+            <Statistic
+              title="套餐销售额"
+              value={packageSales?.total_sales || 0}
+              precision={2}
+              prefix={<CreditCardOutlined />}
+              suffix="元"
+              valueStyle={{ color: '#13c2c2' }}
+            />
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card>
+            <Statistic
+              title="套餐销售数量"
+              value={packageSales?.total_count || 0}
+              prefix={<CreditCardOutlined />}
+              suffix="份"
+              valueStyle={{ color: '#2f54eb' }}
+            />
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card>
+            <Statistic
+              title="次卡剩余预警"
+              value={(packageLowWarning?.low_remaining_total || 0) + (packageLowWarning?.expiring_soon_total || 0)}
+              prefix={<ExclamationCircleOutlined />}
+              valueStyle={{ color: (packageLowWarning?.low_remaining_total || 0) + (packageLowWarning?.expiring_soon_total || 0) > 0 ? '#ff4d4f' : '#52c41a' }}
+            />
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card>
+            <Statistic
+              title="近7日核销"
+              value={packageRedemptionTrend?.summary.total_redemptions || 0}
+              prefix={<ThunderboltOutlined />}
+              suffix="次"
+              valueStyle={{ color: '#fa8c16' }}
             />
           </Card>
         </Col>
@@ -465,6 +640,98 @@ const Dashboard = () => {
               rowKey="rank"
               pagination={false}
               size="small"
+            />
+          </Card>
+        </Col>
+      </Row>
+
+      <Row gutter={16} style={{ marginTop: 24 }}>
+        <Col span={12}>
+          <Card
+            title={<span><CreditCardOutlined style={{ marginRight: 8 }} />套餐销售额统计</span>}
+            extra={
+              <span>
+                总销售额: <strong style={{ color: '#13c2c2' }}>¥{packageSales?.total_sales?.toFixed(2) || '0.00'}</strong>
+                ，销售数量: <Tag color="blue">{packageSales?.total_count || 0}份</Tag>
+              </span>
+            }
+          >
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={packageSalesChartData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="name" />
+                <YAxis yAxisId="left" />
+                <YAxis yAxisId="right" orientation="right" />
+                <Tooltip formatter={(value: any, name: any) =>
+                  name === '销售金额' ? [`¥${Number(value).toFixed(2)}`, name] : [value, name]
+                } />
+                <Legend />
+                <Bar yAxisId="left" dataKey="销售数量" fill="#2f54eb" name="销售数量" />
+                <Bar yAxisId="right" dataKey="销售金额" fill="#13c2c2" name="销售金额" />
+              </BarChart>
+            </ResponsiveContainer>
+          </Card>
+        </Col>
+        <Col span={12}>
+          <Card
+            title={<span><ThunderboltOutlined style={{ marginRight: 8 }} />近7日核销趋势</span>}
+            extra={
+              <span>
+                核销总数: <strong style={{ color: '#fa8c16' }}>{packageRedemptionTrend?.summary.total_redemptions || 0}次</strong>
+                ，混合支付金额: <Tag color="orange">¥{packageRedemptionTrend?.summary.total_mixed_pay_amount?.toFixed(2) || '0.00'}</Tag>
+              </span>
+            }
+          >
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={packageRedemptionTrend?.trend || []}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="label" />
+                <YAxis yAxisId="left" />
+                <YAxis yAxisId="right" orientation="right" />
+                <Tooltip formatter={(value: any, name: any) =>
+                  name === 'mixed_pay_amount' ? [`¥${Number(value).toFixed(2)}`, '混合支付金额'] : [value, name]
+                } />
+                <Legend formatter={(value: any) => {
+                  if (value === 'redemption_count') return '核销次数'
+                  if (value === 'mixed_pay_amount') return '混合支付金额'
+                  return value
+                }} />
+                <Bar yAxisId="left" dataKey="redemption_count" fill="#fa8c16" name="核销次数" />
+                <Line yAxisId="right" type="monotone" dataKey="mixed_pay_amount" stroke="#eb2f96" strokeWidth={2} name="混合支付金额" />
+              </LineChart>
+            </ResponsiveContainer>
+          </Card>
+        </Col>
+      </Row>
+
+      <Row gutter={16} style={{ marginTop: 24 }}>
+        <Col span={12}>
+          <Card
+            title={<span><ExclamationCircleOutlined style={{ color: '#ff4d4f', marginRight: 8 }} />次卡剩余次数预警</span>}
+            extra={<span>共 {packageLowWarning?.low_remaining_total || 0} 个</span>}
+          >
+            <Table
+              columns={packageLowRemainingColumns}
+              dataSource={packageLowWarning?.low_remaining_items || []}
+              rowKey="id"
+              pagination={{ pageSize: 5 }}
+              size="small"
+              locale={{ emptyText: '暂无剩余次数不足的次卡' }}
+            />
+          </Card>
+        </Col>
+        <Col span={12}>
+          <Card
+            title={<span><WarningOutlined style={{ color: '#faad14', marginRight: 8 }} />次卡即将过期预警</span>}
+            extra={<span>共 {packageLowWarning?.expiring_soon_total || 0} 个</span>}
+          >
+            <Table
+              columns={packageExpiringColumns}
+              dataSource={packageLowWarning?.expiring_soon_items || []}
+              rowKey="id"
+              pagination={{ pageSize: 5 }}
+              size="small"
+              locale={{ emptyText: '暂无即将过期的次卡' }}
             />
           </Card>
         </Col>

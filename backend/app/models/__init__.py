@@ -11,6 +11,9 @@ from app.models.member import Member
 from app.models.member_recharge import MemberRecharge
 from app.models.member_consumption import MemberConsumption
 from app.models.operation_log import OperationLog
+from app.models.package_card import PackageCard
+from app.models.member_package import MemberPackage
+from app.models.package_redemption import PackageRedemption
 
 __all__ = [
     "User",
@@ -26,4 +29,7 @@ __all__ = [
     "MemberRecharge",
     "MemberConsumption",
     "OperationLog",
+    "PackageCard",
+    "MemberPackage",
+    "PackageRedemption",
 ]

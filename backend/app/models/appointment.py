@@ -57,8 +57,10 @@ class AppointmentUpdate(BaseModel):
 
 
 class AppointmentCompleteRequest(BaseModel):
-    pay_method: str = Field(..., description="支付方式(余额/现金)")
-    member_no: Optional[str] = Field(None, description="会员编号(余额支付时必填)")
+    pay_method: str = Field(..., description="支付方式(余额/现金/次卡)")
+    member_no: Optional[str] = Field(None, description="会员编号(余额或次卡支付时必填)")
+    member_package_no: Optional[str] = Field(None, description="会员套餐编号(次卡支付时必填)")
+    use_mixed_payment: Optional[bool] = Field(False, description="是否使用混合支付(次卡+余额)")
 
 
 class AppointmentResponse(BaseModel):
