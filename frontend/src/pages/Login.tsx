@@ -58,10 +58,6 @@ const Login = () => {
               登录
             </Button>
           </Form.Item>
-
-          <div style={{ textAlign: 'center', color: '#999', fontSize: 12 }}>
-            默认账号: admin / admin123
-          </div>
         </Form>
       </Card>
     </div>

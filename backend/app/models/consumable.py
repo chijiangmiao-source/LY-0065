@@ -1,7 +1,15 @@
 from datetime import datetime
 from beanie import Document
-from pydantic import Field, BaseModel
+from pydantic import Field, BaseModel, computed_field
 from typing import Optional, List
+
+
+def get_stock_status(stock_quantity: int) -> str:
+    if stock_quantity <= 0:
+        return "缺货"
+    elif stock_quantity < 10:
+        return "库存不足"
+    return "正常"
 
 
 class Consumable(Document):
@@ -10,7 +18,7 @@ class Consumable(Document):
     stock_quantity: int = Field(..., description="库存数量")
     applicable_services: List[str] = Field(default_factory=list, description="适用服务项目")
     unit: str = Field(default="个", description="单位")
-    status: str = Field(default="正常", description="当前状态")
+    status: str = Field(default="正常", description="业务状态(正常/停用)")
     created_at: datetime = Field(default_factory=datetime.now)
 
     class Settings:
@@ -46,6 +54,7 @@ class ConsumableResponse(BaseModel):
     applicable_services: List[str]
     unit: str
     status: str
+    stock_status: str
     created_at: datetime
 
     class Config:

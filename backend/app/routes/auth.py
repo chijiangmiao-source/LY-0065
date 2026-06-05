@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, Depends, status
 
 from app.config import settings
 from app.models.user import User, UserLogin, Token, UserResponse
-from app.utils.auth import verify_password, create_access_token, get_current_user, init_default_user
+from app.utils.auth import verify_password, create_access_token, get_current_user
 
 router = APIRouter()
 
@@ -27,9 +27,3 @@ async def login(form_data: UserLogin):
 @router.get("/me", response_model=UserResponse)
 async def read_users_me(current_user: User = Depends(get_current_user)):
     return UserResponse(id=str(current_user.id), username=current_user.username)
-
-
-@router.post("/init")
-async def init_user():
-    await init_default_user()
-    return {"message": "初始化默认用户成功，用户名: admin, 密码: admin123"}

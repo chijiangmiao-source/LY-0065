@@ -176,11 +176,15 @@ cj65/
 - `DELETE /api/schedules/{id}` - 删除排班
 
 ### 耗材管理
-- `GET /api/consumables` - 获取耗材列表
+- `GET /api/consumables` - 获取耗材列表（返回包含 stock_status 库存状态字段）
 - `POST /api/consumables` - 新增耗材
 - `PUT /api/consumables/{no}` - 更新耗材
 - `DELETE /api/consumables/{no}` - 删除耗材
 - `POST /api/consumables/{no}/stock/add` - 耗材入库
+
+> 耗材状态说明：
+> - `status` 业务状态：正常/停用（存储在数据库）
+> - `stock_status` 库存状态：正常/库存不足/缺货（根据 stock_quantity 动态计算，≤0 缺货，<10 库存不足，否则正常）
 
 ### 领用登记
 - `GET /api/usages` - 获取领用记录

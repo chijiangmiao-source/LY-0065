@@ -1,11 +1,25 @@
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Depends, Query
 
-from app.models.consumable import Consumable, ConsumableCreate, ConsumableUpdate, ConsumableResponse
+from app.models.consumable import Consumable, ConsumableCreate, ConsumableUpdate, ConsumableResponse, get_stock_status
 from app.models.user import User
 from app.utils.auth import get_current_user
 
 router = APIRouter()
+
+
+def build_consumable_response(c: Consumable) -> ConsumableResponse:
+    return ConsumableResponse(
+        id=str(c.id),
+        consumable_no=c.consumable_no,
+        name=c.name,
+        stock_quantity=c.stock_quantity,
+        applicable_services=c.applicable_services,
+        unit=c.unit,
+        status=c.status,
+        stock_status=get_stock_status(c.stock_quantity),
+        created_at=c.created_at
+    )
 
 
 @router.post("", response_model=ConsumableResponse)
@@ -15,22 +29,13 @@ async def create_consumable(consumable: ConsumableCreate, current_user: User = D
         raise HTTPException(status_code=400, detail="耗材编号已存在")
     db_consumable = Consumable(**consumable.model_dump())
     await db_consumable.insert()
-    return ConsumableResponse(
-        id=str(db_consumable.id),
-        consumable_no=db_consumable.consumable_no,
-        name=db_consumable.name,
-        stock_quantity=db_consumable.stock_quantity,
-        applicable_services=db_consumable.applicable_services,
-        unit=db_consumable.unit,
-        status=db_consumable.status,
-        created_at=db_consumable.created_at
-    )
+    return build_consumable_response(db_consumable)
 
 
 @router.get("", response_model=List[ConsumableResponse])
 async def get_consumables(
     name: Optional[str] = Query(None, description="耗材名称"),
-    status: Optional[str] = Query(None, description="状态"),
+    status: Optional[str] = Query(None, description="业务状态(正常/停用)"),
     current_user: User = Depends(get_current_user)
 ):
     query = {}
@@ -40,18 +45,7 @@ async def get_consumables(
         query["status"] = status
     
     consumables = await Consumable.find(query).to_list()
-    return [
-        ConsumableResponse(
-            id=str(c.id),
-            consumable_no=c.consumable_no,
-            name=c.name,
-            stock_quantity=c.stock_quantity,
-            applicable_services=c.applicable_services,
-            unit=c.unit,
-            status=c.status,
-            created_at=c.created_at
-        ) for c in consumables
-    ]
+    return [build_consumable_response(c) for c in consumables]
 
 
 @router.get("/{consumable_no}", response_model=ConsumableResponse)
@@ -59,16 +53,7 @@ async def get_consumable(consumable_no: str, current_user: User = Depends(get_cu
     consumable = await Consumable.find_one(Consumable.consumable_no == consumable_no)
     if not consumable:
         raise HTTPException(status_code=404, detail="耗材不存在")
-    return ConsumableResponse(
-        id=str(consumable.id),
-        consumable_no=consumable.consumable_no,
-        name=consumable.name,
-        stock_quantity=consumable.stock_quantity,
-        applicable_services=consumable.applicable_services,
-        unit=consumable.unit,
-        status=consumable.status,
-        created_at=consumable.created_at
-    )
+    return build_consumable_response(consumable)
 
 
 @router.put("/{consumable_no}", response_model=ConsumableResponse)
@@ -82,16 +67,7 @@ async def update_consumable(consumable_no: str, consumable_update: ConsumableUpd
         setattr(consumable, key, value)
     
     await consumable.save()
-    return ConsumableResponse(
-        id=str(consumable.id),
-        consumable_no=consumable.consumable_no,
-        name=consumable.name,
-        stock_quantity=consumable.stock_quantity,
-        applicable_services=consumable.applicable_services,
-        unit=consumable.unit,
-        status=consumable.status,
-        created_at=consumable.created_at
-    )
+    return build_consumable_response(consumable)
 
 
 @router.delete("/{consumable_no}")

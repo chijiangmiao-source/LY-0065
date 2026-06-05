@@ -11,6 +11,7 @@ interface Consumable {
   applicable_services: string[]
   unit: string
   status: string
+  stock_status: string
   created_at: string
 }
 
@@ -19,10 +20,15 @@ interface ServiceOption {
   name: string
 }
 
-const statusColors: Record<string, string> = {
+const stockStatusColors: Record<string, string> = {
   '正常': 'green',
   '库存不足': 'orange',
   '缺货': 'red',
+}
+
+const businessStatusColors: Record<string, string> = {
+  '正常': 'blue',
+  '停用': 'default',
 }
 
 const Consumable = () => {
@@ -35,11 +41,18 @@ const Consumable = () => {
   const [selectedConsumable, setSelectedConsumable] = useState<string>('')
   const [form] = Form.useForm()
   const [stockForm] = Form.useForm()
+  const [filters, setFilters] = useState({
+    name: '',
+    status: '',
+  })
 
   const fetchData = async () => {
     setLoading(true)
     try {
-      const res = await request.get('/consumables') as Consumable[]
+      const params = new URLSearchParams()
+      if (filters.name) params.append('name', filters.name)
+      if (filters.status) params.append('status', filters.status)
+      const res = await request.get(`/consumables?${params.toString()}`) as Consumable[]
       setData(res)
     } finally {
       setLoading(false)
@@ -58,7 +71,7 @@ const Consumable = () => {
   useEffect(() => {
     fetchData()
     fetchServices()
-  }, [])
+  }, [filters])
 
   const handleAdd = () => {
     setEditingItem(null)
@@ -115,12 +128,6 @@ const Consumable = () => {
     }
   }
 
-  const getStatus = (stock: number) => {
-    if (stock <= 0) return '缺货'
-    if (stock < 10) return '库存不足'
-    return '正常'
-  }
-
   const columns = [
     { title: '耗材编号', dataIndex: 'consumable_no', key: 'consumable_no' },
     { title: '耗材名称', dataIndex: 'name', key: 'name' },
@@ -131,8 +138,26 @@ const Consumable = () => {
       render: (quantity: number, record: Consumable) => (
         <Space>
           <span>{quantity} {record.unit}</span>
-          <Tag color={statusColors[getStatus(quantity)]}>{getStatus(quantity)}</Tag>
+          <Tag color={stockStatusColors[record.stock_status] || 'default'}>
+            {record.stock_status}
+          </Tag>
         </Space>
+      ),
+    },
+    {
+      title: '库存状态',
+      dataIndex: 'stock_status',
+      key: 'stock_status',
+      render: (status: string) => (
+        <Tag color={stockStatusColors[status] || 'default'}>{status}</Tag>
+      ),
+    },
+    {
+      title: '业务状态',
+      dataIndex: 'status',
+      key: 'status',
+      render: (status: string) => (
+        <Tag color={businessStatusColors[status] || 'default'}>{status}</Tag>
       ),
     },
     {
@@ -179,6 +204,34 @@ const Consumable = () => {
         </Button>
       }
     >
+      <Card size="small" style={{ marginBottom: 16 }}>
+        <Row gutter={16}>
+          <Col span={8}>
+            <Input
+              placeholder="搜索耗材名称"
+              allowClear
+              value={filters.name}
+              onChange={(e) => setFilters({ ...filters, name: e.target.value })}
+            />
+          </Col>
+          <Col span={8}>
+            <Select
+              placeholder="选择业务状态"
+              allowClear
+              style={{ width: '100%' }}
+              value={filters.status || undefined}
+              onChange={(value) => setFilters({ ...filters, status: value || '' })}
+              options={[
+                { value: '正常', label: '正常' },
+                { value: '停用', label: '停用' },
+              ]}
+            />
+          </Col>
+          <Col span={8}>
+            <Button onClick={() => setFilters({ name: '', status: '' })}>重置</Button>
+          </Col>
+        </Row>
+      </Card>
       <Table columns={columns} dataSource={data} rowKey="id" loading={loading} />
       <Modal
         title={editingItem ? '编辑耗材' : '新增耗材'}
@@ -230,7 +283,7 @@ const Consumable = () => {
               }))}
             />
           </Form.Item>
-          <Form.Item name="status" label="状态">
+          <Form.Item name="status" label="业务状态">
             <Select
               options={[
                 { value: '正常', label: '正常' },
